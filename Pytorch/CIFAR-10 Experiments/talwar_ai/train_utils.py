@@ -24,8 +24,8 @@ class ModelTrainer():
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
-    def Train(self, data_loaders, num_epochs=1, checkpoint_per_epoch=1, 
-              eval_stats=['loss'], stat_per_epoch=1):
+    def Train(self, data_loaders, num_epochs=1, use_iterations=False, num_iters=500, 
+            checkpoint_per_epoch=1, eval_stats=['loss'], stat_per_epoch=1, update_iter=5):
         progress_bar = tqdm(total=num_epochs)
         iter_per_epoch = len(data_loaders)
         stat_freq = floor(iter_per_epoch/stat_per_epoch)
@@ -34,7 +34,7 @@ class ModelTrainer():
         torch.set_grad_enabled(True)
         for epoch in range(num_epochs):
             for i, data in enumerate(data_loaders['train'], 1):
-                if (i%5 == 0):
+                if (i%update_iter == 0):
                     progress_bar.set_description('e {} i {}'.format(epoch + 1, i))
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
