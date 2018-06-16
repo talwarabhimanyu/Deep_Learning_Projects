@@ -15,23 +15,111 @@ import re
 from tqdm import tqdm_notebook as tqdm
 import gc
 
+class NNModel():
+    def __init__(self, model_name, optim_name, criterion_name, num_classes, pre_trained=False):
+        self.model_name = model_name
+        self.optim_name = optim_name
+        self.criterion_name = criterion_name
+        self.num_classes = num_classes
+        self.pre_trained = pre_trained
+        self.model = self.loadModel()
+        self.optimizer = self.loadOptim(self.model.parameters())
+        self.criterion = self.loadCriterion()
+
+    def loadModel(self):
+        if (self.model_name == 'resnet18'):
+            base_model = models.resnet18(pretrained=self.pre_trained)
+        elif (self.model_name == 'resnet34'):
+            base_model = models.resnet34(pretrained=self.pre_trained)
+        elif (self.model_name == 'resnet50'):
+            base_model = models.resnet50(pretrained=self.pre_trained)
+        else:
+            pass
+        if ('resnet' in self.model_name):
+            base_model.avgpool = nn.AdaptiveAvgPool2d(1)
+            base_model.fc = nn.Linear(base_model.fc.in_features, self.num_classes)
+        return base_model
+
+    def loadOptim(self, params):
+        """
+        Initializes the optimizer for this model. By default, all model parameters
+        are passed to the optimizer - this can be modified by using the freezeParams()
+        method.
+
+        """
+        if (self.optim_name == 'sgd'):
+            optimizer = optim.SGD(params, lr=0.1)
+        elif (self.optim_name == 'adam'):
+            optimizer = optim.Adam(params, lr=0.1)
+        else:
+            pass
+        return optimizer
+    
+    def loadCriterion(self):
+        if (self.criterion_name == 'cross_entropy'):
+            criterion = nn.CrossEntropyLoss()
+        else:
+            pass
+        return criterion
+
+    def freezeParams(self, freeze_modules=[]):
+        """
+        Freezes (sets requires_grad=FalsE) parameters of the model, based on arguments 
+        provided:
+        (1) freeze_modules: list of module names - all params belonging to these
+            modules are frozen.
+
+        """
+        # First pass to set requires_grad=True for all parameters.
+        for param in self.model.parameters():
+            param.requires_grad = True
+        # Iterate over freeze_modules to set their requires_grad=False
+        for name, module in self.model.named_modules():
+            if (name in freeze_modules):
+                for param in module.parameters():
+                    param.requires_grad = False
+        # Recreate optimizer with updated parameters
+        self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
+
+    def exploreLR(self, num_iter=100, min_lr=1e-5, max_lr=10.0):
+        pass
+
+
+    def printModules(self, verbose=True):
+        # Display names of modules of this model instance. If verbose is True, then
+        # only display immediate children modules, otherwise display a nested heirachy
+        # of depth 4.
+        for name, module in self.model.named_children():
+            print('Module: ' + name)
+            if not verbose:
+                for name1, module1 in module.named_children():
+                    print('..' + name1)
+                    for name2, module2 in module1.named_children():
+                        print('....' + name2)
+                        for name3, module3 in module2.named_children():
+                            print('......' + name3)
+                            for name4, module4 in module3.named_children():
+                                print('........' + name4)
+
 
 # Given a model (an object inherited from nn.Module), this model will handle 
 # training, hyperparameter tuning, evaluation, logging information.
-class ModelTrainer():
+class Trainer():
     def __init__(self, device, model, criterion, optimizer, model_path):
         self.device = device
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
-    def Train(self, data_loaders, num_epochs=1, use_iterations=False, num_iters=500, 
-            checkpoint_per_epoch=1, eval_stats=['loss'], stat_per_epoch=1, update_iter=5):
+    def train(self, data_loaders, num_epochs=1, use_iterations=False, num_iters=500, 
+            checkpoint_per_epoch=1, eval_stats=['loss'], stat_per_epoch=1, update_iter=5,
+            stop_at_iter=-1):
         progress_bar = tqdm(total=num_epochs)
         iter_per_epoch = len(data_loaders)
         stat_freq = floor(iter_per_epoch/stat_per_epoch)
         checkpoint_freq = floor(iter_per_epoch/checkpoint_per_epoch)
         running_loss = 0.0
         torch.set_grad_enabled(True)
+        iter_count = 0
         for epoch in range(num_epochs):
             for i, data in enumerate(data_loaders['train'], 1):
                 if (i%update_iter == 0):
@@ -48,7 +136,7 @@ class ModelTrainer():
                 # eval stats, display stats, checkpoint if needed.
                 if (i%stat_freq == 0):
                     #eval stats
-                    valid_stats = self._evalStats(self.device, self.model, self.criterion, 
+                    valid_stats = Trainer._evalStats(self.device, self.model, self.criterion, 
                             data_loaders['valid'], eval_stats=eval_stats)
                     train_loss = running_loss/stat_freq
                     running_loss = 0.0
@@ -57,7 +145,13 @@ class ModelTrainer():
                 if (i%checkpoint_freq == 0):
                     #checkpoint
                     pass
+                iter_count += 1
+                if (iter_count == stop_at_iter):
+                    break
             progress_bar.update(1)
+            if (iter_count == stop_at_iter):
+                break
+
     @classmethod
     def _evalStats(cls, device, model, criterion, data_loader, num_items=1, eval_stats=['loss']):
         num_iter = 0
