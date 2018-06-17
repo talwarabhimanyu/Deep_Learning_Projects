@@ -14,12 +14,14 @@ import shutil
 import re
 from tqdm import tqdm_notebook as tqdm
 import gc
+from torch.optim.lr_scheduler import StepLR, LambdaLR
 
 class NNModel():
     def __init__(self, model_name, optim_name, criterion_name, num_classes, pre_trained=False):
         self.model_name = model_name
         self.optim_name = optim_name
         self.criterion_name = criterion_name
+        self.scheduler = None
         self.num_classes = num_classes
         self.pre_trained = pre_trained
         self.model = self.loadModel()
@@ -27,6 +29,12 @@ class NNModel():
         self.criterion = self.loadCriterion()
 
     def loadModel(self):
+        """
+        Loads model architecture along with pre-trained parameters (if asked). Replaces
+        plain vanilla pooling with adaptive pooling, and updates the number of output
+        nodes in the final layer.
+
+        """
         if (self.model_name == 'resnet18'):
             base_model = models.resnet18(pretrained=self.pre_trained)
         elif (self.model_name == 'resnet34'):
@@ -81,9 +89,27 @@ class NNModel():
         # Recreate optimizer with updated parameters
         self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
 
-    def exploreLR(self, num_iter=100, min_lr=1e-5, max_lr=10.0):
-        pass
+    def exploreLR(self, num_iter=500, min_lr=1e-4, max_lr=10.0, mult_factor=1.1):
+        # First save state of the existing optimizer, change its learning rate to min_lr,
+        # and revert to original state in the end.
+        orig_state_dict = self.optimizer.state_dict
+        for param in self.optimizer.param_groups:
+            param['lr'] = 1.0
+        arg_dict = {'init_lr' : min_lr,
+                'final_lr' : max_lr,
+                'num_iter' : num_iter,
+                'mult' : mult_factor}
+        self.setScheduler('linear', arg_dict)
+        # train here for num_iter
+        # revert to original state here
 
+    def setScheduler(self, sched_name, arg_dict):
+        if (sched_name == 'linear'):
+            lambda_fn = lambda batch: min(arg_dict['final_lr'], 
+                    arg_dict['init_lr']*arg_dict['mult']**batch)
+            self.scheduler = LambdaLR(self.optimizer, lr_lambda=lambda_fn)  
+        else:
+            pass
 
     def printModules(self, verbose=True):
         # Display names of modules of this model instance. If verbose is True, then
@@ -105,14 +131,15 @@ class NNModel():
 # Given a model (an object inherited from nn.Module), this model will handle 
 # training, hyperparameter tuning, evaluation, logging information.
 class Trainer():
-    def __init__(self, device, model, criterion, optimizer, model_path):
+    def __init__(self, device, model, criterion, optimizer, scheduler, model_path, sched_type='batch'):
         self.device = device
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
+        self.scheduler = scheduler
     def train(self, data_loaders, num_epochs=1, use_iterations=False, num_iters=500, 
-            checkpoint_per_epoch=1, eval_stats=['loss'], stat_per_epoch=1, update_iter=5,
-            stop_at_iter=-1):
+            checkpoint_per_epoch=1, eval_stats=['loss'], stat_per_epoch=1, update_prog_bar_iter=5,
+            stop_at_iter=-1, verbose=True):
         progress_bar = tqdm(total=num_epochs)
         iter_per_epoch = len(data_loaders)
         stat_freq = floor(iter_per_epoch/stat_per_epoch)
@@ -122,10 +149,12 @@ class Trainer():
         iter_count = 0
         for epoch in range(num_epochs):
             for i, data in enumerate(data_loaders['train'], 1):
-                if (i%update_iter == 0):
+                if verbose and (i%update_prog_bar_iter == 0):
                     progress_bar.set_description('e {} i {}'.format(epoch + 1, i))
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
+                if (sched_type == 'batch'):
+                    self.scheduler.step()
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, labels)
@@ -148,7 +177,7 @@ class Trainer():
                 iter_count += 1
                 if (iter_count == stop_at_iter):
                     break
-            progress_bar.update(1)
+            if verbose: progress_bar.update(1)
             if (iter_count == stop_at_iter):
                 break
 
