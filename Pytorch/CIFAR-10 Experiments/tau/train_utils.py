@@ -16,27 +16,103 @@ from tqdm import tqdm_notebook as tqdm
 import gc
 from torch.optim.lr_scheduler import StepLR, LambdaLR
 
-class LR_Scheduler():
+class Callback():
+    def on_train_begin(): pass
+    def on_batch_begin(): pass
+    def on_batch_end(): pass
+
+class LR_Scheduler(Callback):
+    """
+    Abstract class which will be inherited by every LR Scheduler class
+    and the LR Finder class. I have borrowed ideas related to Callbacks
+    from Fast.AI's library. The code files I've consulted can be found
+    here:
+    https://github.com/fastai/fastai/blob/master/fastai/model.py
+    https://github.com/fastai/fastai/blob/master/fastai/sgdr.py
+    https://github.com/fastai/fastai/blob/master/fastai/learner.py
+
+    """
     def updateLR(self): pass
 
 class LR_Finder(LR_Scheduler):
-    def __init__(self, min_lr=1e-5, max_lr=10.0, num_iter=100):
+    def __init__(self, optimizer, min_lr=1e-5, max_lr=10.0, num_iter=100):
         self.step = (log10(max_lr) - log10(min_lr))/num_iter
-    def updateLR(self):
-    # for each layer in optimizer param_group, update lr according to this scheme
+        self.optimizer = optimizer
+        self.init_exp = log10(min_lr)
+        self.curr_exp = self.init_exp
+        self.smooth_loss = []
+        self.lr_series = []
+        self.iter_num = 0
+        self.avg_loss = 0
+        self.mom = 0.98
+        self.curr_lr = 10**self.init_exp
+        self.initLR()
+
+    def initLR(self):
+        for param in self.optimizer.param_groups:
+            param['lr'] = self.curr_lr
+
+    def updateLR(self, stats):
+        self.iter_num += 1
+        batch_loss = stats['train_loss']
+        self.avg_loss = self.avg_loss*self.mom + batch_loss*(1 - self.mom)
+        self.smooth_loss.append(self.avg_loss/(1 - self.mom**self.iter_num))
+        self.lr_series.append(self.curr_lr)
+        self.curr_exp += self.step
+        self.curr_lr = 10**self.curr_exp
+        for param in self.optimizer.param_groups:
+            param['lr'] = self.curr_lr
+
+    def on_batch_end(self, stats):
+        updateLR()
+
+    def plotLR(self):
+        fig = plt.gcf()
+        ax = plt.gca()
+        fig.set_size_inches(10,5)
+        fig.set_dpi(80)
+        _ = plt.plot(np.asarray(self.lr_seris), np.asarray(self.smooth_loss))
+        ax.set_xscale('log')
+
+
+class StatRecorder(Callback):
+    def __init__(self):
+        self.iter_num = 0
+        self.epoch_num = 0
+
+    def recordLoss(self, stats):
+
+
+    def on_batch_end(self, stats):
+        recordLoss(stats)
+
 
 class NNModel():
-    def __init__(self, device, model_name, optim_name, criterion_name, num_classes, data_loaders, pre_trained=False):
+    """
+
+    Class Attributes:
+
+    optimizer: initialized to SGD with lr=0.01 for all model parameters. This can
+    be modified via loadOptim()
+
+    Class Methods:
+
+    loadOptim(optim_name, params): Loads an optimizer of type optim_name and initializes
+    it using params.
+        optim_name: String. One of 'sgd', 'adam'.
+        params: It is of type parameters or a dictionary specifying parameter groups with or
+        without group lrs.
+    """
+    def __init__(self, device, model_name, criterion_name, num_classes, data_loaders, pre_trained=False):
         self.device = device
         self.model_name = model_name
-        self.optim_name = optim_name
         self.criterion_name = criterion_name
         self.scheduler = None
         self.num_classes = num_classes
         self.data_loaders = data_loaders
         self.pre_trained = pre_trained
         self.model = self.loadModel()
-        self.optimizer = self.loadOptim(self.model.parameters())
+        self.optimizer = self.loadOptim('sgd', self.model.parameters())
         self.criterion = self.loadCriterion()
 
     def loadModel(self):
@@ -59,20 +135,33 @@ class NNModel():
             base_model.fc = nn.Linear(base_model.fc.in_features, self.num_classes)
         return base_model
 
-    def loadOptim(self, params):
+    def loadOptim(self, optim_name, optim_params, **kwargs):
         """
-        Initializes the optimizer for this model. By default, all model parameters
-        are passed to the optimizer - this can be modified by using the freezeParams()
-        method.
+        Loads an optimizer for this model.
 
         """
-        if (self.optim_name == 'sgd'):
-            optimizer = optim.SGD(params, lr=0.01)
-        elif (self.optim_name == 'adam'):
-            optimizer = optim.Adam(params, lr=0.01)
+        default_lr = 0.01
+        if 'default_lr' in kwargs:
+            default_lr = kwargs['default_lr']
+        default_mom = 0.0
+        if 'default_mom' in kwargs:
+            default_mom = kwargs['default_mom']
+
+        if (optim_name == 'sgd'):
+            optimizer = optim.SGD(optim_params, lr=default_lr, \
+                    momentum=default_mom)
+        elif (optim_name == 'adam'):
+            optimizer = optim.Adam(optim_params, lr=0.01)
         else:
             pass
         return optimizer
+
+    def setOptim(self, optim_name, optim_params, **kwargs):
+        self.optimizer = self.loadOptime(optim_name, optim_params, **kwargs)
+
+    def setScheduler(self, sched_name):
+        if sched_name == 'finder':
+            self.scheduler = LR_Finder(self.optimizer)
     
     def loadCriterion(self):
         if (self.criterion_name == 'cross_entropy'):
@@ -105,6 +194,9 @@ class NNModel():
         # First save state of the existing optimizer, change its learning rate to min_lr,
         # and revert to original state in the end.
         orig_state_dict = self.optimizer.state_dict
+        self.setOptim('sgd', self.model.parameters())
+        self.setScheduler('finder')
+
         for param in self.optimizer.param_groups:
             param['lr'] = 1.0
         exp_range = log10(max_lr/min_lr)
@@ -124,13 +216,6 @@ class NNModel():
         ax.set_ylim(bottom=0, top=5*min(lr_stats['train_loss']))
         # need data - lr history, loss history
         # revert to original state here
-
-    def setScheduler(self, sched_name, arg_dict):
-        if (sched_name == 'log_scale'):
-            lambda_fn = lambda batch: arg_dict['init_lr']*(arg_dict['mult']**batch)
-            self.scheduler = LambdaLR(self.optimizer, lr_lambda=lambda_fn)  
-        else:
-            pass
 
     def printModules(self, verbose=True):
         # Display names of modules of this model instance. If verbose is True, then
@@ -152,13 +237,17 @@ class NNModel():
 # Given a model (an object inherited from nn.Module), this model will handle 
 # training, hyperparameter tuning, evaluation, logging information.
 class Trainer():
-    def __init__(self, device, model, criterion, optimizer, scheduler, model_path, sched_type='batch'):
+    def __init__(self, device, model, criterion, optimizer, scheduler, model_path, callbacks=None, sched_type='batch'):
         self.device = device
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.sched_type = sched_type
+        if callbacks is None:
+            self.callbacks = []
+        else:
+            self.callbacks = callbacks
     def train(self, data_loaders, num_iter=1, iter_type='epoch', 
             checkpoint_per_epoch=1, eval_stats=['train_loss', 'valid_loss'], stat_freq_batches=1, update_prog_bar_iter=5,
             verbose=True):
@@ -202,6 +291,8 @@ class Trainer():
             else:
                 sched_epoch = True
         epoch = 0
+
+        for cb in callbacks: cb.on_train_begin()
         while epoch < max_epochs:
             description_str = epoch_desc.format(epoch + 1) + 'i {}'
             for iter_num, data in enumerate(data_loaders['train'], 1):
@@ -209,8 +300,6 @@ class Trainer():
                     progress_bar.set_description(description_str.format(iter_num))
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
-                if (sched_batch):
-                    self.scheduler.step()
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, labels)
