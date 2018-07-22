@@ -298,6 +298,7 @@ class Trainer():
             for iter_num, data in enumerate(data_loaders['train'], 1):
                 if verbose and (iter_num%update_prog_bar_iter == 0):
                     progress_bar.set_description(description_str.format(iter_num))
+                for cb in callbacks: cb.on_batch_begin()
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
                 self.optimizer.zero_grad()
@@ -307,6 +308,7 @@ class Trainer():
                 loss.backward()
                 self.optimizer.step()
                 running_loss += loss.item()
+                for cb in callbacks: cb.on_batch_end()
                 # eval stats, display stats, checkpoint if needed.
                 if (iter_num%stat_freq_batches == 0):
                     #valid set stats
