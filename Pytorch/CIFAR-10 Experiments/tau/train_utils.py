@@ -1,5 +1,5 @@
 import numpy as np
-from math import floor
+from math import floor, log10
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,6 +15,15 @@ import re
 from tqdm import tqdm_notebook as tqdm
 import gc
 from torch.optim.lr_scheduler import StepLR, LambdaLR
+
+class LR_Scheduler():
+    def updateLR(self): pass
+
+class LR_Finder(LR_Scheduler):
+    def __init__(self, min_lr=1e-5, max_lr=10.0, num_iter=100):
+        self.step = (log10(max_lr) - log10(min_lr))/num_iter
+    def updateLR(self):
+    # for each layer in optimizer param_group, update lr according to this scheme
 
 class NNModel():
     def __init__(self, device, model_name, optim_name, criterion_name, num_classes, data_loaders, pre_trained=False):
@@ -92,27 +101,33 @@ class NNModel():
         """ Add code to handle param_groups """
         self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
 
-    def exploreLR(self, num_iter=500, min_lr=1e-4, max_lr=10.0, mult_factor=1.1):
+    def exploreLR(self, num_iter=100, min_lr=1e-4, max_lr=10.0, mult_factor=1.1):
         # First save state of the existing optimizer, change its learning rate to min_lr,
         # and revert to original state in the end.
         orig_state_dict = self.optimizer.state_dict
         for param in self.optimizer.param_groups:
             param['lr'] = 1.0
+        exp_range = log10(max_lr/min_lr)
+        exp_step = exp_range/num_iter
+        mult_factor = 10**exp_step
         arg_dict = {'init_lr' : min_lr,
-                'final_lr' : max_lr,
-                'num_iter' : num_iter,
                 'mult' : mult_factor}
-        self.setScheduler('linear', arg_dict)
+        self.setScheduler('log_scale', arg_dict)
         # train here for num_iter
         trainer = Trainer(self.device, self.model, self.criterion, self.optimizer, self.scheduler, '')
-        lr_stats = trainer.train(self.data_loaders, num_iter=100, iter_type='batch', eval_stats=['train_loss'])
+        lr_stats = trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch', eval_stats=['train_loss', 'train_lr'])
+        fig = plt.gcf()
+        fig.set_size_inches(10,5)
+        fig.set_dpi(80)
+        _ = plt.plot(np.asarray(lr_stats['train_loss']))
+        ax = plt.gca()
+        ax.set_ylim(bottom=0, top=5*min(lr_stats['train_loss']))
         # need data - lr history, loss history
         # revert to original state here
 
     def setScheduler(self, sched_name, arg_dict):
-        if (sched_name == 'linear'):
-            lambda_fn = lambda batch: min(arg_dict['final_lr'], 
-                    arg_dict['init_lr']*arg_dict['mult']**batch)
+        if (sched_name == 'log_scale'):
+            lambda_fn = lambda batch: arg_dict['init_lr']*(arg_dict['mult']**batch)
             self.scheduler = LambdaLR(self.optimizer, lr_lambda=lambda_fn)  
         else:
             pass
@@ -169,14 +184,16 @@ class Trainer():
         max_iters = 1e6
         max_epochs = 1e6
         stats = {}
-        valid_eval_stats = list(filter(lambda st: ('valid' in st), eval_stats))
-        train_eval_stats = list(filter(lambda st: ('train' in st), eval_stats))
+        train_eval_stats = list(filter(lambda st: 'train' in st, eval_stats))
+        valid_eval_stats = list(filter(lambda st: 'valid' in st, eval_stats))
         for st in eval_stats:
             stats.update({st : []})
+        epoch_desc = 'e {}'
         if (iter_type == 'epoch'):
             max_epochs = num_iter
         else:
             max_iters = num_iter
+            epoch_desc = ''
         sched_batch = False
         sched_epoch = False
         if (self.scheduler != None):
@@ -186,9 +203,10 @@ class Trainer():
                 sched_epoch = True
         epoch = 0
         while epoch < max_epochs:
+            description_str = epoch_desc.format(epoch + 1) + 'i {}'
             for iter_num, data in enumerate(data_loaders['train'], 1):
                 if verbose and (iter_num%update_prog_bar_iter == 0):
-                    progress_bar.set_description('e {} i {}'.format(epoch + 1, iter_num))
+                    progress_bar.set_description(description_str.format(iter_num))
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
                 if (sched_batch):
@@ -212,8 +230,10 @@ class Trainer():
                     if ('train_loss' in train_eval_stats):
                         stats['train_loss'].append(train_loss)
                     running_loss = 0.0
-                    progress_bar.set_postfix(train_loss='{:.2f}'.format(train_loss), 
-                                         val_loss='{:.2f}'.format(valid_stats['loss']))
+                    status_dict = {'train_loss' : '{:.2f}'.format(train_loss)}
+                    if ('loss' in valid_stats):
+                        status_dict.update({'val_loss' : ':.2f'.format(valid_stats['loss'])})
+                    progress_bar.set_postfix(status_dict) 
                 if (iter_num%checkpoint_freq == 0):
                     #checkpoint
                     pass
