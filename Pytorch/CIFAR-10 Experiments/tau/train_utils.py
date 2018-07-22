@@ -17,12 +17,14 @@ import gc
 from torch.optim.lr_scheduler import StepLR, LambdaLR
 
 class NNModel():
-    def __init__(self, model_name, optim_name, criterion_name, num_classes, pre_trained=False):
+    def __init__(self, device, model_name, optim_name, criterion_name, num_classes, data_loaders, pre_trained=False):
+        self.device = device
         self.model_name = model_name
         self.optim_name = optim_name
         self.criterion_name = criterion_name
         self.scheduler = None
         self.num_classes = num_classes
+        self.data_loaders = data_loaders
         self.pre_trained = pre_trained
         self.model = self.loadModel()
         self.optimizer = self.loadOptim(self.model.parameters())
@@ -31,8 +33,8 @@ class NNModel():
     def loadModel(self):
         """
         Loads model architecture along with pre-trained parameters (if asked). Replaces
-        plain vanilla pooling with adaptive pooling, and updates the number of output
-        nodes in the final layer.
+        plain vanilla pooling with adaptive pooling for resnet models, and sets the 
+        number of output nodes in the final layer equal to number of classes.
 
         """
         if (self.model_name == 'resnet18'):
@@ -56,9 +58,9 @@ class NNModel():
 
         """
         if (self.optim_name == 'sgd'):
-            optimizer = optim.SGD(params, lr=0.1)
+            optimizer = optim.SGD(params, lr=0.01)
         elif (self.optim_name == 'adam'):
-            optimizer = optim.Adam(params, lr=0.1)
+            optimizer = optim.Adam(params, lr=0.01)
         else:
             pass
         return optimizer
@@ -78,7 +80,7 @@ class NNModel():
             modules are frozen.
 
         """
-        # First pass to set requires_grad=True for all parameters.
+        # First set requires_grad=True for all parameters.
         for param in self.model.parameters():
             param.requires_grad = True
         # Iterate over freeze_modules to set their requires_grad=False
@@ -86,7 +88,8 @@ class NNModel():
             if (name in freeze_modules):
                 for param in module.parameters():
                     param.requires_grad = False
-        # Recreate optimizer with updated parameters
+        # Recreate optimizer with only those parameters for which requires_grad = True
+        """ Add code to handle param_groups """
         self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
 
     def exploreLR(self, num_iter=500, min_lr=1e-4, max_lr=10.0, mult_factor=1.1):
@@ -101,6 +104,9 @@ class NNModel():
                 'mult' : mult_factor}
         self.setScheduler('linear', arg_dict)
         # train here for num_iter
+        trainer = Trainer(self.device, self.model, self.criterion, self.optimizer, self.scheduler, '')
+        lr_stats = trainer.train(self.data_loaders, num_iter=100, iter_type='batch', eval_stats=['train_loss'])
+        # need data - lr history, loss history
         # revert to original state here
 
     def setScheduler(self, sched_name, arg_dict):
@@ -119,13 +125,13 @@ class NNModel():
             print('Module: ' + name)
             if not verbose:
                 for name1, module1 in module.named_children():
-                    print('..' + name1)
+                    print((8*' ') + '|_' + name1)
                     for name2, module2 in module1.named_children():
-                        print('....' + name2)
+                        print((8*' ') + '|___' + name2)
                         for name3, module3 in module2.named_children():
-                            print('......' + name3)
+                            print((8*' ') + '|_____' + name3)
                             for name4, module4 in module3.named_children():
-                                print('........' + name4)
+                                print((8*' ') + '|_______ ' + name4)
 
 
 # Given a model (an object inherited from nn.Module), this model will handle 
@@ -137,23 +143,55 @@ class Trainer():
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
-    def train(self, data_loaders, num_epochs=1, use_iterations=False, num_iters=500, 
-            checkpoint_per_epoch=1, eval_stats=['loss'], stat_per_epoch=1, update_prog_bar_iter=5,
-            stop_at_iter=-1, verbose=True):
-        progress_bar = tqdm(total=num_epochs)
+        self.sched_type = sched_type
+    def train(self, data_loaders, num_iter=1, iter_type='epoch', 
+            checkpoint_per_epoch=1, eval_stats=['train_loss', 'valid_loss'], stat_freq_batches=1, update_prog_bar_iter=5,
+            verbose=True):
+        """
+        This method allows training of a model based on a given optimizer and criterion. The training
+        can be run for a specified number of epochs (one epoch is full pass over training data) or for
+        a specified number of iterations.
+        Arguments:
+        - iter_type: set to 'epoch' (trains for num_iter epochs) or 'batch' (runs for num_iter batches).
+        - eval_stats: it can calculate the following statistics, every stat_freq_batches number of batches.
+          'train_loss': Loss per batch averaged over stat_freq_batches number of batches.
+          'valid_loss' : Loss per batch averaged over the entire validation set.
+          'train_acc' : Accuracy for stat_freq_batches number of batches.
+          'valid_acc' : Accuracy for the entire validation set.
+
+        """
+        progress_bar = tqdm(total=num_iter)
         iter_per_epoch = len(data_loaders)
-        stat_freq = floor(iter_per_epoch/stat_per_epoch)
         checkpoint_freq = floor(iter_per_epoch/checkpoint_per_epoch)
         running_loss = 0.0
         torch.set_grad_enabled(True)
         iter_count = 0
-        for epoch in range(num_epochs):
-            for i, data in enumerate(data_loaders['train'], 1):
-                if verbose and (i%update_prog_bar_iter == 0):
-                    progress_bar.set_description('e {} i {}'.format(epoch + 1, i))
+        max_iters = 1e6
+        max_epochs = 1e6
+        stats = {}
+        valid_eval_stats = list(filter(lambda st: ('valid' in st), eval_stats))
+        train_eval_stats = list(filter(lambda st: ('train' in st), eval_stats))
+        for st in eval_stats:
+            stats.update({st : []})
+        if (iter_type == 'epoch'):
+            max_epochs = num_iter
+        else:
+            max_iters = num_iter
+        sched_batch = False
+        sched_epoch = False
+        if (self.scheduler != None):
+            if (self.sched_type == 'batch'):
+                sched_batch = True
+            else:
+                sched_epoch = True
+        epoch = 0
+        while epoch < max_epochs:
+            for iter_num, data in enumerate(data_loaders['train'], 1):
+                if verbose and (iter_num%update_prog_bar_iter == 0):
+                    progress_bar.set_description('e {} i {}'.format(epoch + 1, iter_num))
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
-                if (sched_type == 'batch'):
+                if (sched_batch):
                     self.scheduler.step()
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
@@ -163,23 +201,30 @@ class Trainer():
                 self.optimizer.step()
                 running_loss += loss.item()
                 # eval stats, display stats, checkpoint if needed.
-                if (i%stat_freq == 0):
-                    #eval stats
+                if (iter_num%stat_freq_batches == 0):
+                    #valid set stats
                     valid_stats = Trainer._evalStats(self.device, self.model, self.criterion, 
-                            data_loaders['valid'], eval_stats=eval_stats)
-                    train_loss = running_loss/stat_freq
+                            data_loaders['valid'], eval_stats=[x.replace('valid_', '') for x in valid_eval_stats])
+                    for st in valid_eval_stats:
+                        stats[st].append(valid_stats[st.replace('valid_', '')])
+                    train_loss = running_loss/stat_freq_batches
+                    # train set stats
+                    if ('train_loss' in train_eval_stats):
+                        stats['train_loss'].append(train_loss)
                     running_loss = 0.0
                     progress_bar.set_postfix(train_loss='{:.2f}'.format(train_loss), 
                                          val_loss='{:.2f}'.format(valid_stats['loss']))
-                if (i%checkpoint_freq == 0):
+                if (iter_num%checkpoint_freq == 0):
                     #checkpoint
                     pass
                 iter_count += 1
-                if (iter_count == stop_at_iter):
+                if (iter_count == max_iters):
                     break
             if verbose: progress_bar.update(1)
-            if (iter_count == stop_at_iter):
+            if (iter_count == max_iters):
                 break
+            epoch += 1
+        return stats
 
     @classmethod
     def _evalStats(cls, device, model, criterion, data_loader, num_items=1, eval_stats=['loss']):
