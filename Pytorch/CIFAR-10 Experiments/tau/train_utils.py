@@ -65,7 +65,7 @@ class LR_Finder(LR_Scheduler):
     def on_batch_end(self, stats):
         self.updateLR(stats)
 
-    def plotLR(self):
+    def plotLR(self, xlim=None):
         fig = plt.gcf()
         ax = plt.gca()
         fig.set_size_inches(10,5)
@@ -74,24 +74,48 @@ class LR_Finder(LR_Scheduler):
         ax.set_xscale('log')
         ax.set_xlabel('Learning Rates (log-scale)')
         ax.set_ylabel('Loss (Smoothed)')
+        if xlim is not None:
+            ax.set_xlim(left=xlim[0], right=xlim[1])
+            max_idx = min(range(len(self.lr_series)), key=lambda i: abs(self.lr_series[i] - xlim[1]))
+            min_idx = min(range(len(self.lr_series)), key=lambda i: abs(self.lr_series[i] - xlim[0]))
+            ax.set_ylim(top=np.asarray(self.smooth_loss[min_idx:max_idx]).max(), \
+                    bottom=np.asarray(self.smooth_loss[min_idx:max_idx]).min())
+
+    def zoomPlot(self, min_lr=1e-3, max_lr=1e-1):
+        self.plotLR(xlim=[min_lr, max_lr])
 
 class LR_Circular(LR_Scheduler):
     def __init__(self):
         pass
 
 class StatRecorder(Callback):
-    def __init__(self):
+    def __init__(self, model, criterion, stat_list=['train_loss'], val_freq_batches=200):
         self.iter_num = 0
         self.epoch_num = 0
+        self.model = model
+        self.criterion = criterion
+        self.train_stat_list = list(filter(lambda st: 'train' in st, stat_list))
+        self.train_stat_dict = {st : [] for st in self.train_stat_list}
+        self.val_stat_list = list(filter(lambda st: 'valid' in st, stat_list))
+        self.val_stat_dict = {st : [] for st in self.val_stat_list}
+        self.val_freq_batches = val_freq_batches
 
-    def recordLoss(self, stats):
-        pass
+    def updateIter(self):
+        self.iter_num += 1
+
+    def updateStats(self, stats):
+        for st in train_stat_list:
+            if (st == 'train_loss'):
+                train_stat_dict[st].append(stats['train_loss'])
+        if ((self.iter_num - 1) % self.val_stat_freq == 0):
+            pass
 
     def on_batch_end(self, stats):
-        recordLoss(stats)
+        self.updateIter()
+        self.updateStats(stats)
 
 
-class NNModel():
+class NeuralNet():
     """
 
     Class Attributes:
@@ -116,7 +140,7 @@ class NNModel():
         self.data_loaders = data_loaders
         self.pre_trained = pre_trained
         self.model = self.loadModel()
-        self.optimizer = self.loadOptim('sgd', self.model.parameters())
+        self.optimizer = self.loadOptim('default', self.model.parameters())
         self.criterion = self.loadCriterion()
 
     def loadModel(self):
@@ -141,6 +165,9 @@ class NNModel():
 
     def resetModel(self):
         self.model = self.loadModel()
+    
+    def getModel(self):
+        return self.model
 
     def loadOptim(self, optim_name, optim_params, **kwargs):
         """
@@ -154,17 +181,23 @@ class NNModel():
         if 'default_mom' in kwargs:
             default_mom = kwargs['default_mom']
 
-        if (optim_name == 'sgd'):
+        if (optim_name == 'default'):
+            optimizer = optim.SGD(optim_params, lr=default_lr, \
+                    momentum=default_mom)
+        elif (optim_name == 'sgd'):
             optimizer = optim.SGD(optim_params, lr=default_lr, \
                     momentum=default_mom)
         elif (optim_name == 'adam'):
-            optimizer = optim.Adam(optim_params, lr=0.01)
+            optimizer = optim.Adam(optim_params, lr=default_lr)
         else:
             pass
         return optimizer
 
     def setOptim(self, optim_name, optim_params, **kwargs):
         self.optimizer = self.loadOptim(optim_name, optim_params, **kwargs)
+
+    def getOptim(self):
+        return self.optimizer
 
     def setScheduler(self, sched_name, **kwargs):
         if sched_name == 'finder':
@@ -176,6 +209,9 @@ class NNModel():
         else:
             pass
         return criterion
+    
+    def getCriterion(self):
+        return self.criterion
 
     def freezeParams(self, freeze_modules=[]):
         """
@@ -208,7 +244,7 @@ class NNModel():
         # Revert to original states here if required.
 
         # train here for num_iter
-        trainer = Trainer(self.device, self.model, self.criterion, self.optimizer, model_path='', callbacks=[self.scheduler])
+        trainer = Trainer(self.device, self, model_path='', callbacks=[self.scheduler])
         trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch', eval_stats=['train_loss', 'train_lr'])
 
         return self.scheduler
@@ -233,11 +269,17 @@ class NNModel():
 # Given a model (an object inherited from nn.Module), this model will handle 
 # training, hyperparameter tuning, evaluation, logging information.
 class Trainer():
-    def __init__(self, device, model, criterion, optimizer, model_path, callbacks=None):
+    """
+
+    Class attributes:
+
+    model_arch: The model architecture.
+    """
+    def __init__(self, device, model_arch, model_path, callbacks=None):
         self.device = device
-        self.model = model
-        self.criterion = criterion
-        self.optimizer = optimizer
+        self.model = model_arch.getModel()
+        self.criterion = model_arch.getCriterion()
+        self.optimizer = model_arch.getOptim()
         if callbacks is None:
             self.callbacks = []
         else:
@@ -365,35 +407,3 @@ class Trainer():
             optim_dict = state['optim_dict']
             state_epoch = state['state_epoch']
         return model_dict, optim_dict, state_epoch
-
-def LRPlots(num_trial=5, iter_per_trial=10):
-    torch.set_grad_enabled(True)
-    update_freq = 1
-    plots = {}
-    for trial in range(num_trial):
-        lr = 10**(-np.random.uniform(1, 3))
-        model, optimizer, criterion = GetModel(lr)
-        running_loss = 0.0
-        num_updates  = 0
-        loss_record = []
-        for i, data in zip(range(iter_per_trial), image_loaders['train']):
-            inputs, labels = data['image'].to(device), data['label'].long().to(device)
-            # forward pass
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            # backward pass
-            loss.backward()
-            optimizer.step()
-            # update statistics
-            running_loss += loss.item()
-            num_updates += 1
-            if (i%update_freq == 0):
-                loss_record += [round(running_loss/num_updates, 2)]
-                running_loss = 0.0
-                num_updates = 0
-        plots.update({round(lr, 5) : loss_record})
-    return plots
-
-def TestFn():
-    print('Hello World')
