@@ -68,7 +68,7 @@ class LR_Finder(LR_Scheduler):
     def plotLR(self, xlim=None):
         fig = plt.gcf()
         ax = plt.gca()
-        fig.set_size_inches(10,5)
+        fig.set_size_inches(8,5)
         fig.set_dpi(80)
         _ = plt.plot(np.asarray(self.lr_series), np.asarray(self.smooth_loss))
         ax.set_xscale('log')
@@ -89,30 +89,62 @@ class LR_Circular(LR_Scheduler):
         pass
 
 class StatRecorder(Callback):
-    def __init__(self, model, criterion, stat_list=['train_loss'], val_freq_batches=200):
+    def __init__(self, device, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_batches=5):
         self.iter_num = 0
         self.epoch_num = 0
+        self.device = device
         self.model = model
         self.criterion = criterion
+        self.data_loaders = data_loaders
         self.train_stat_list = list(filter(lambda st: 'train' in st, stat_list))
         self.train_stat_dict = {st : [] for st in self.train_stat_list}
-        self.val_stat_list = list(filter(lambda st: 'valid' in st, stat_list))
+        self.val_stat_list = list(filter(lambda st: 'val' in st, stat_list))
         self.val_stat_dict = {st : [] for st in self.val_stat_list}
         self.val_freq_batches = val_freq_batches
+        self.val_iter_indices = []
 
     def updateIter(self):
         self.iter_num += 1
 
     def updateStats(self, stats):
-        for st in train_stat_list:
+        for st in self.train_stat_list:
             if (st == 'train_loss'):
-                train_stat_dict[st].append(stats['train_loss'])
-        if ((self.iter_num - 1) % self.val_stat_freq == 0):
-            pass
+                self.train_stat_dict[st].append(stats['train_loss'])
+        if (self.iter_num % self.val_freq_batches == 0) and (len(self.val_stat_list) != 0):
+            self.val_iter_indices.append(self.iter_num)
+            torch.set_grad_enabled(False)
+            val_iter = 0
+            cum_val_loss = 0
+            for data in iter(self.data_loaders['val']):
+                inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
+                outputs = self.model(inputs)
+                if ('val_loss' in self.val_stat_list):
+                    loss = self.criterion(outputs, labels)
+                    cum_val_loss += loss.item()
+                val_iter += 1
+            torch.set_grad_enabled(True)
+            if ('val_loss' in self.val_stat_list):
+                self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
+            
+
+    def plotLossCurve(self):
+        fig = plt.gcf()
+        ax = plt.gca()
+        fig.set_size_inches(8,5)
+        fig.set_dpi(80)
+        if 'val_loss' in self.val_stat_list:
+            xticks = self.val_iter_indices
+            train_loss_series = [self.train_stat_dict['train_loss'][i] for i in xticks]
+        else:
+            xticks = range(len(self.train_stat_dict['train_loss']))
+            train_loss_series = self.train_stat_dict['train_loss']
+        train_line = ax.plot(xticks, train_loss_series)
+        if 'val_loss' in self.val_stat_list:
+            val_line = ax.plot(xticks, self.val_stat_dict['val_loss'])
 
     def on_batch_end(self, stats):
-        self.updateIter()
         self.updateStats(stats)
+        self.updateIter()
 
 
 class NeuralNet():
@@ -142,6 +174,8 @@ class NeuralNet():
         self.model = self.loadModel()
         self.optimizer = self.loadOptim('default', self.model.parameters())
         self.criterion = self.loadCriterion()
+        self.stat_recorder = StatRecorder(self.device, self.model, self.criterion, self.data_loaders)
+        self.callbacks = [self.stat_recorder]
 
     def loadModel(self):
         """
@@ -202,7 +236,10 @@ class NeuralNet():
     def setScheduler(self, sched_name, **kwargs):
         if sched_name == 'finder':
             self.scheduler = LR_Finder(self.optimizer, **kwargs)
-    
+   
+    def setCallbacks(self, callbacks):
+        self.callbacks = callbacks
+
     def loadCriterion(self):
         if (self.criterion_name == 'cross_entropy'):
             criterion = nn.CrossEntropyLoss()
@@ -241,11 +278,12 @@ class NeuralNet():
         self.resetModel()
         self.setOptim('sgd', self.model.parameters())
         self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iter=num_iter)
+        self.setCallbacks([self.scheduler])
         # Revert to original states here if required.
 
         # train here for num_iter
-        trainer = Trainer(self.device, self, model_path='', callbacks=[self.scheduler])
-        trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch', eval_stats=['train_loss', 'train_lr'])
+        trainer = Trainer(self.device, self, model_path='')
+        trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch')
 
         return self.scheduler
 
@@ -275,15 +313,15 @@ class Trainer():
 
     model_arch: The model architecture.
     """
-    def __init__(self, device, model_arch, model_path, callbacks=None):
+    def __init__(self, device, model_arch, model_path):
         self.device = device
         self.model = model_arch.getModel()
         self.criterion = model_arch.getCriterion()
         self.optimizer = model_arch.getOptim()
-        if callbacks is None:
+        if model_arch.callbacks is None:
             self.callbacks = []
         else:
-            self.callbacks = callbacks
+            self.callbacks = model_arch.callbacks
     def train(self, data_loaders, num_iter=1, iter_type='epoch', 
             checkpoint_per_epoch=1, eval_stats=['train_loss', 'valid_loss'], stat_freq_batches=1, update_prog_bar_iter=5,
             verbose=True):
@@ -367,28 +405,6 @@ class Trainer():
             epoch += 1
        # return stats
 
-    @classmethod
-    def _evalStats(cls, device, model, criterion, data_loader, num_items=1, eval_stats=['loss']):
-        num_iter = 0
-        loss_stat= 0.0
-        stats = {}
-        torch.set_grad_enabled(False)
-        for data in iter(data_loader):
-            inputs, labels = data['image'].to(device), data['label'].long().to(device)
-            outputs = model(inputs)
-            if ('loss' in eval_stats):
-                loss = criterion(outputs, labels)
-                loss_stat += loss.item()
-            num_iter += 1
-        torch.set_grad_enabled(True)
-        if ('loss' in eval_stats):
-            if (num_iter == 0):
-                loss_stat = 0.0
-            else:
-                loss_stat = round(loss_stat/num_iter*num_items, 2)
-            stats.update({'loss' : loss_stat})
-        return stats
-        
     def SaveCheckpoint(self, model_path):
         state = {'model_dict' : self.model.state_dict(),
                 'optim_dict' : self.optimizer.state_dict(),

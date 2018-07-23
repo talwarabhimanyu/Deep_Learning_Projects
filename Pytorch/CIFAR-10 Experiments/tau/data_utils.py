@@ -57,26 +57,26 @@ class SingleLabelImages(Dataset):
                     'id' : self.idx_to_img[idx]}
 
 # Split data into train and validation set
-def SplitTrainValid(data_dir, train_dir, valid_dir, data_file, train_file, valid_file, valid_percent, has_header):
+def SplitTrainValid(data_dir, train_dir, val_dir, data_file, train_file, val_file, val_percent, has_header):
     progress_bar = tqdm(total=50000)
     with open(train_file, 'w') as train_f:
         train_writer = csv.writer(train_f, lineterminator='\n')
-        with open(valid_file, 'w') as valid_f:
-            valid_writer = csv.writer(valid_f, lineterminator='\n')
+        with open(val_file, 'w') as val_f:
+            val_writer = csv.writer(val_f, lineterminator='\n')
             with open(data_file, 'r') as f:
                 reader = iter(csv.reader(f))
                 if has_header:
                     row = next(reader)
                     train_writer.writerow(row)
-                    valid_writer.writerow(row)
+                    val_writer.writerow(row)
                 for row in reader:
                     rand_num = np.random.uniform(0, 1)
-                    if (rand_num > valid_percent/100.0):
+                    if (rand_num > val_percent/100.0):
                         train_writer.writerow(row)
                         shutil.copyfile(os.path.join(data_dir, row[0]+'.png'),
                                        os.path.join(train_dir, row[0]+'.png'))
                     else:
-                        valid_writer.writerow(row)
+                        val_writer.writerow(row)
                         shutil.copyfile(os.path.join(data_dir, row[0]+'.png'),
-                                       os.path.join(valid_dir, row[0]+'.png'))
+                                       os.path.join(val_dir, row[0]+'.png'))
                     progress_bar.update(1)
