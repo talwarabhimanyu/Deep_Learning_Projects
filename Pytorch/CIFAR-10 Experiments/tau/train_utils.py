@@ -17,9 +17,9 @@ import gc
 from torch.optim.lr_scheduler import StepLR, LambdaLR
 
 class Callback():
-    def on_train_begin(): pass
-    def on_batch_begin(): pass
-    def on_batch_end(): pass
+    def on_train_begin(self): pass
+    def on_batch_begin(self): pass
+    def on_batch_end(self): pass
 
 class LR_Scheduler(Callback):
     """
@@ -64,15 +64,17 @@ class LR_Finder(LR_Scheduler):
             param['lr'] = self.curr_lr
 
     def on_batch_end(self, stats):
-        updateLR()
+        self.updateLR(stats)
 
     def plotLR(self):
         fig = plt.gcf()
         ax = plt.gca()
         fig.set_size_inches(10,5)
         fig.set_dpi(80)
-        _ = plt.plot(np.asarray(self.lr_seris), np.asarray(self.smooth_loss))
+        _ = plt.plot(np.asarray(self.lr_series), np.asarray(self.smooth_loss))
         ax.set_xscale('log')
+        ax.set_xlabel('Learning Rates (log-scale)')
+        ax.set_ylabel('Loss (Smoothed)')
 
 
 class StatRecorder(Callback):
@@ -81,7 +83,7 @@ class StatRecorder(Callback):
         self.epoch_num = 0
 
     def recordLoss(self, stats):
-
+        pass
 
     def on_batch_end(self, stats):
         recordLoss(stats)
@@ -157,7 +159,7 @@ class NNModel():
         return optimizer
 
     def setOptim(self, optim_name, optim_params, **kwargs):
-        self.optimizer = self.loadOptime(optim_name, optim_params, **kwargs)
+        self.optimizer = self.loadOptim(optim_name, optim_params, **kwargs)
 
     def setScheduler(self, sched_name):
         if sched_name == 'finder':
@@ -197,25 +199,11 @@ class NNModel():
         self.setOptim('sgd', self.model.parameters())
         self.setScheduler('finder')
 
-        for param in self.optimizer.param_groups:
-            param['lr'] = 1.0
-        exp_range = log10(max_lr/min_lr)
-        exp_step = exp_range/num_iter
-        mult_factor = 10**exp_step
-        arg_dict = {'init_lr' : min_lr,
-                'mult' : mult_factor}
-        self.setScheduler('log_scale', arg_dict)
         # train here for num_iter
-        trainer = Trainer(self.device, self.model, self.criterion, self.optimizer, self.scheduler, '')
-        lr_stats = trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch', eval_stats=['train_loss', 'train_lr'])
-        fig = plt.gcf()
-        fig.set_size_inches(10,5)
-        fig.set_dpi(80)
-        _ = plt.plot(np.asarray(lr_stats['train_loss']))
-        ax = plt.gca()
-        ax.set_ylim(bottom=0, top=5*min(lr_stats['train_loss']))
-        # need data - lr history, loss history
-        # revert to original state here
+        trainer = Trainer(self.device, self.model, self.criterion, self.optimizer, model_path='', callbacks=[self.scheduler])
+        trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch', eval_stats=['train_loss', 'train_lr'])
+
+        return self.scheduler
 
     def printModules(self, verbose=True):
         # Display names of modules of this model instance. If verbose is True, then
@@ -237,13 +225,11 @@ class NNModel():
 # Given a model (an object inherited from nn.Module), this model will handle 
 # training, hyperparameter tuning, evaluation, logging information.
 class Trainer():
-    def __init__(self, device, model, criterion, optimizer, scheduler, model_path, callbacks=None, sched_type='batch'):
+    def __init__(self, device, model, criterion, optimizer, model_path, callbacks=None):
         self.device = device
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.sched_type = sched_type
         if callbacks is None:
             self.callbacks = []
         else:
@@ -283,22 +269,15 @@ class Trainer():
         else:
             max_iters = num_iter
             epoch_desc = ''
-        sched_batch = False
-        sched_epoch = False
-        if (self.scheduler != None):
-            if (self.sched_type == 'batch'):
-                sched_batch = True
-            else:
-                sched_epoch = True
         epoch = 0
 
-        for cb in callbacks: cb.on_train_begin()
+        for cb in self.callbacks: cb.on_train_begin()
         while epoch < max_epochs:
             description_str = epoch_desc.format(epoch + 1) + 'i {}'
             for iter_num, data in enumerate(data_loaders['train'], 1):
                 if verbose and (iter_num%update_prog_bar_iter == 0):
                     progress_bar.set_description(description_str.format(iter_num))
-                for cb in callbacks: cb.on_batch_begin()
+                for cb in self.callbacks: cb.on_batch_begin()
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
                 self.optimizer.zero_grad()
@@ -308,23 +287,24 @@ class Trainer():
                 loss.backward()
                 self.optimizer.step()
                 running_loss += loss.item()
-                for cb in callbacks: cb.on_batch_end()
+                stats = {'train_loss' : loss.item()}
+                for cb in self.callbacks: cb.on_batch_end(stats)
                 # eval stats, display stats, checkpoint if needed.
-                if (iter_num%stat_freq_batches == 0):
+                #if (iter_num%stat_freq_batches == 0):
                     #valid set stats
-                    valid_stats = Trainer._evalStats(self.device, self.model, self.criterion, 
-                            data_loaders['valid'], eval_stats=[x.replace('valid_', '') for x in valid_eval_stats])
-                    for st in valid_eval_stats:
-                        stats[st].append(valid_stats[st.replace('valid_', '')])
-                    train_loss = running_loss/stat_freq_batches
-                    # train set stats
-                    if ('train_loss' in train_eval_stats):
-                        stats['train_loss'].append(train_loss)
-                    running_loss = 0.0
-                    status_dict = {'train_loss' : '{:.2f}'.format(train_loss)}
-                    if ('loss' in valid_stats):
-                        status_dict.update({'val_loss' : ':.2f'.format(valid_stats['loss'])})
-                    progress_bar.set_postfix(status_dict) 
+                    #valid_stats = Trainer._evalStats(self.device, self.model, self.criterion, 
+                    #        data_loaders['valid'], eval_stats=[x.replace('valid_', '') for x in valid_eval_stats])
+                    #for st in valid_eval_stats:
+                    #    stats[st].append(valid_stats[st.replace('valid_', '')])
+                    #train_loss = running_loss/stat_freq_batches
+                    ## train set stats
+                    #if ('train_loss' in train_eval_stats):
+                    #    stats['train_loss'].append(train_loss)
+                    #running_loss = 0.0
+                    #status_dict = {'train_loss' : '{:.2f}'.format(train_loss)}
+                    #if ('loss' in valid_stats):
+                    #    status_dict.update({'val_loss' : ':.2f'.format(valid_stats['loss'])})
+                    #progress_bar.set_postfix(status_dict) 
                 if (iter_num%checkpoint_freq == 0):
                     #checkpoint
                     pass
@@ -335,7 +315,7 @@ class Trainer():
             if (iter_count == max_iters):
                 break
             epoch += 1
-        return stats
+       # return stats
 
     @classmethod
     def _evalStats(cls, device, model, criterion, data_loader, num_items=1, eval_stats=['loss']):
