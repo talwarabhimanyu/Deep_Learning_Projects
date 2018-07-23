@@ -132,15 +132,10 @@ class StatRecorder(Callback):
         ax = plt.gca()
         fig.set_size_inches(8,5)
         fig.set_dpi(80)
+        train_line = ax.plot(range(len(self.train_stat_dict['train_loss'])), \
+                self.train_stat_dict['train_loss'])
         if 'val_loss' in self.val_stat_list:
-            xticks = self.val_iter_indices
-            train_loss_series = [self.train_stat_dict['train_loss'][i] for i in xticks]
-        else:
-            xticks = range(len(self.train_stat_dict['train_loss']))
-            train_loss_series = self.train_stat_dict['train_loss']
-        train_line = ax.plot(xticks, train_loss_series)
-        if 'val_loss' in self.val_stat_list:
-            val_line = ax.plot(xticks, self.val_stat_dict['val_loss'])
+            val_line = ax.plot(self.val_iter_indices, self.val_stat_dict['val_loss'])
 
     def on_batch_end(self, stats):
         self.updateStats(stats)
