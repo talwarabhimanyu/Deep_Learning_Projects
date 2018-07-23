@@ -14,7 +14,6 @@ import shutil
 import re
 from tqdm import tqdm_notebook as tqdm
 import gc
-from torch.optim.lr_scheduler import StepLR, LambdaLR
 
 class Callback():
     def on_train_begin(self): pass
@@ -76,6 +75,9 @@ class LR_Finder(LR_Scheduler):
         ax.set_xlabel('Learning Rates (log-scale)')
         ax.set_ylabel('Loss (Smoothed)')
 
+class LR_Circular(LR_Scheduler):
+    def __init__(self):
+        pass
 
 class StatRecorder(Callback):
     def __init__(self):
@@ -137,6 +139,9 @@ class NNModel():
             base_model.fc = nn.Linear(base_model.fc.in_features, self.num_classes)
         return base_model
 
+    def resetModel(self):
+        self.model = self.loadModel()
+
     def loadOptim(self, optim_name, optim_params, **kwargs):
         """
         Loads an optimizer for this model.
@@ -161,9 +166,9 @@ class NNModel():
     def setOptim(self, optim_name, optim_params, **kwargs):
         self.optimizer = self.loadOptim(optim_name, optim_params, **kwargs)
 
-    def setScheduler(self, sched_name):
+    def setScheduler(self, sched_name, **kwargs):
         if sched_name == 'finder':
-            self.scheduler = LR_Finder(self.optimizer)
+            self.scheduler = LR_Finder(self.optimizer, **kwargs)
     
     def loadCriterion(self):
         if (self.criterion_name == 'cross_entropy'):
@@ -192,12 +197,15 @@ class NNModel():
         """ Add code to handle param_groups """
         self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
 
-    def exploreLR(self, num_iter=100, min_lr=1e-4, max_lr=10.0, mult_factor=1.1):
-        # First save state of the existing optimizer, change its learning rate to min_lr,
-        # and revert to original state in the end.
-        orig_state_dict = self.optimizer.state_dict
+    def exploreLR(self, num_iter=200, min_lr=1e-4, max_lr=10.0):
+        # Save current state of model and optimizer - they can be reverted to
+        # original states if required.
+        optim_state_dict = self.optimizer.state_dict
+        model_state_dict = self.model.state_dict()
+        self.resetModel()
         self.setOptim('sgd', self.model.parameters())
-        self.setScheduler('finder')
+        self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iter=num_iter)
+        # Revert to original states here if required.
 
         # train here for num_iter
         trainer = Trainer(self.device, self.model, self.criterion, self.optimizer, model_path='', callbacks=[self.scheduler])
@@ -253,7 +261,7 @@ class Trainer():
         progress_bar = tqdm(total=num_iter)
         iter_per_epoch = len(data_loaders)
         checkpoint_freq = floor(iter_per_epoch/checkpoint_per_epoch)
-        running_loss = 0.0
+        #running_loss = 0.0
         torch.set_grad_enabled(True)
         iter_count = 0
         max_iters = 1e6
@@ -286,7 +294,7 @@ class Trainer():
                 # backward pass
                 loss.backward()
                 self.optimizer.step()
-                running_loss += loss.item()
+                #running_loss += loss.item()
                 stats = {'train_loss' : loss.item()}
                 for cb in self.callbacks: cb.on_batch_end(stats)
                 # eval stats, display stats, checkpoint if needed.
