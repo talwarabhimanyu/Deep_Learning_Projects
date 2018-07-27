@@ -192,7 +192,7 @@ class Trainer():
         else:
             self.callbacks = model_arch.callbacks
     def train(self, data_loaders, num_iter=1, iter_type='epoch', 
-            checkpoint_per_epoch=1, eval_stats=['train_loss', 'valid_loss'], stat_freq_batches=1, update_prog_bar_iter=5,
+            checkpoint_per_epoch=1, stat_freq_batches=1, update_prog_bar_iter=5,
             verbose=True):
         """
         This method allows training of a model based on a given optimizer and criterion. The training
@@ -200,12 +200,7 @@ class Trainer():
         a specified number of iterations.
         Arguments:
         - iter_type: set to 'epoch' (trains for num_iter epochs) or 'batch' (runs for num_iter batches).
-        - eval_stats: it can calculate the following statistics, every stat_freq_batches number of batches.
-          'train_loss': Loss per batch averaged over stat_freq_batches number of batches.
-          'valid_loss' : Loss per batch averaged over the entire validation set.
-          'train_acc' : Accuracy for stat_freq_batches number of batches.
-          'valid_acc' : Accuracy for the entire validation set.
-
+        
         """
         progress_bar = tqdm(total=num_iter)
         iter_per_epoch = len(data_loaders)
@@ -216,10 +211,6 @@ class Trainer():
         max_iters = 1e6
         max_epochs = 1e6
         stats = {}
-        train_eval_stats = list(filter(lambda st: 'train' in st, eval_stats))
-        valid_eval_stats = list(filter(lambda st: 'valid' in st, eval_stats))
-        for st in eval_stats:
-            stats.update({st : []})
         epoch_desc = 'e {}'
         if (iter_type == 'epoch'):
             max_epochs = num_iter

@@ -82,9 +82,17 @@ class LR_Finder(LR_Scheduler):
                     bottom=np.asarray(self.smooth_loss[min_idx:max_idx]).min())
 
     def zoomPlot(self, min_lr=1e-3, max_lr=1e-1):
+        """
+        This function zooms into the original LRs vs Smoothed Loss plot.
+        """
         self.plotLR(xlim=[min_lr, max_lr])
 
-class LR_Circular(LR_Scheduler):
+class LR_Cyclical(LR_Scheduler):
+    """
+    This implements Leslie Smith's Cyclical LR regim. The original paper can be found here:
+    https://arxiv.org/abs/1506.01186    
+
+    """
     def __init__(self):
         pass
 
@@ -125,9 +133,8 @@ class StatRecorder(Callback):
             torch.set_grad_enabled(True)
             if ('val_loss' in self.val_stat_list):
                 self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
-            
 
-    def plotLossCurve(self):
+    def plotLoss(self):
         fig = plt.gcf()
         ax = plt.gca()
         fig.set_size_inches(8,5)
