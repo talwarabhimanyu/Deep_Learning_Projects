@@ -139,6 +139,12 @@ class StatRecorder(Callback):
         self.val_freq_batches = val_freq_batches
         self.val_iter_indices = []
 
+    def setStatList(self, stat_list):
+        if 'train_loss' not in stat_list:
+            stat_list.append('train_loss')
+        self.train_stat_list = list(filter(lambda st: 'train' in st, stat_list))
+        self.val_stat_list = list(filter(lambda st: 'val' in st, stat_list))
+
     def resetRecorder(self):
         self.train_stat_dict = {st : [] for st in self.train_stat_list}
         self.val_stat_dict = {st : [] for st in self.val_stat_list}
@@ -165,13 +171,13 @@ class StatRecorder(Callback):
                 self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
 
     def getLatestStats(self):
-        last_iter = self.val_iter_indices[-1]
-        if 'train_loss' in self.train_stat_dict:
-            latest_train_loss = self.train_stat_dict['train_loss'][last_iter - 1]
+        last_iter = -1
+        if len(self.val_iter_indices) != 0:
+            last_iter = self.val_iter_indices[-1]
+        latest_stats = {'train_loss' : self.train_stat_dict['train_loss'][last_iter - 1]}
         if 'val_loss' in self.val_stat_dict:
-            latest_val_loss = self.val_stat_dict['val_loss'][-1]
-        return {'train_loss': latest_train_loss, \
-                'val_loss': latest_val_loss}
+            latest_stats.update({'val_loss' : self.val_stat_dict['val_loss'][-1]})
+        return latest_stats
 
     def plotLoss(self):
         fig = plt.gcf()
@@ -237,6 +243,3 @@ class NotebookDisplay(Callback):
     def on_epoch_end(self):
         if self.every_epoch:
             self.updateBarCount()
-
-
-

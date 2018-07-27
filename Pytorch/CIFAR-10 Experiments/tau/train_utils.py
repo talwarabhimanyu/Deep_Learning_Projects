@@ -116,12 +116,16 @@ class NeuralNet():
         if sched_name == 'finder':
             self.scheduler = LR_Finder(self.optimizer, self.clock, **kwargs)
    
-    def addCallbacks(self, cb):
+    def setCallbacks(self, cb):
+        self.callbacks = [self.clock, self.stat_recorder]
         if isinstance(cb, list):
             for c in cb:
                 self.callbacks.append(cb)
         else:
             self.callbacks.append(cb)
+    
+    def setStatList(self, stat_list):
+        self.stat_recorder.setStatList(stat_list)
 
     def loadCriterion(self):
         if (self.criterion_name == 'cross_entropy'):
@@ -161,7 +165,8 @@ class NeuralNet():
         self.resetModel()
         self.setOptim('sgd', self.model.parameters())
         self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iters=num_iters)
-        self.addCallbacks(self.scheduler)
+        self.setStatList([])
+        self.setCallbacks(self.scheduler)
         # Revert to original states here if required.
 
         # train here for num_iter
