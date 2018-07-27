@@ -187,11 +187,13 @@ class Trainer():
         self.model = model_arch.getModel()
         self.criterion = model_arch.getCriterion()
         self.optimizer = model_arch.getOptim()
+        self.display = NotebookDisplay(model_arch)
         if model_arch.callbacks is None:
             self.callbacks = []
         else:
             self.callbacks = model_arch.callbacks
-    def train(self, data_loaders, num_iter=1, iter_type='epoch', 
+        self.callbacks.append(self.display)
+    def train(self, data_loaders, num_iters=1, iter_type='epoch', 
             checkpoint_per_epoch=1, stat_freq_batches=1, update_prog_bar_iter=5,
             verbose=True):
         """
@@ -202,7 +204,7 @@ class Trainer():
         - iter_type: set to 'epoch' (trains for num_iter epochs) or 'batch' (runs for num_iter batches).
         
         """
-        progress_bar = tqdm(total=num_iter)
+        #progress_bar = tqdm(total=num_iter)
         iter_per_epoch = len(data_loaders)
         checkpoint_freq = floor(iter_per_epoch/checkpoint_per_epoch)
         #running_loss = 0.0
@@ -213,18 +215,18 @@ class Trainer():
         stats = {}
         epoch_desc = 'e {}'
         if (iter_type == 'epoch'):
-            max_epochs = num_iter
+            max_epochs = num_iters
         else:
-            max_iters = num_iter
+            max_iters = num_iters
             epoch_desc = ''
         epoch = 0
 
-        for cb in self.callbacks: cb.on_train_begin()
+        for cb in self.callbacks: cb.on_train_begin(num_iters=num_iters, iter_type=iter_type)
         while epoch < max_epochs:
             description_str = epoch_desc.format(epoch + 1) + 'i {}'
             for iter_num, data in enumerate(data_loaders['train'], 1):
-                if verbose and (iter_num%update_prog_bar_iter == 0):
-                    progress_bar.set_description(description_str.format(iter_num))
+                #if verbose and (iter_num%update_prog_bar_iter == 0):
+                #    progress_bar.set_description(description_str.format(iter_num))
                 for cb in self.callbacks: cb.on_batch_begin()
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
@@ -235,8 +237,8 @@ class Trainer():
                 loss.backward()
                 self.optimizer.step()
                 #running_loss += loss.item()
-                stats = {'train_loss' : loss.item()}
-                for cb in self.callbacks: cb.on_batch_end(stats)
+                stats_dict = {'train_loss' : loss.item()}
+                for cb in self.callbacks: cb.on_batch_end(stats_dict=stats_dict)
                    #status_dict = {'train_loss' : '{:.2f}'.format(train_loss)}
                     #if ('loss' in valid_stats):
                     #    status_dict.update({'val_loss' : ':.2f'.format(valid_stats['loss'])})
@@ -247,10 +249,11 @@ class Trainer():
                 iter_count += 1
                 if (iter_count == max_iters):
                     break
-            if verbose: progress_bar.update(1)
+            #if verbose: progress_bar.update(1)
             if (iter_count == max_iters):
                 break
             epoch += 1
+            for cb in self.callbacks: cb.on_epoch_end()
        # return stats
 
     def SaveCheckpoint(self, model_path):

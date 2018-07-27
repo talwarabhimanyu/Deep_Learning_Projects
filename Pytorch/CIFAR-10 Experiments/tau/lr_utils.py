@@ -16,9 +16,10 @@ from tqdm import tqdm_notebook as tqdm
 import gc
 
 class Callback():
-    def on_train_begin(self): pass
-    def on_batch_begin(self): pass
-    def on_batch_end(self): pass
+    def on_train_begin(self, **kwargs): pass
+    def on_batch_begin(self, **kwargs): pass
+    def on_batch_end(self, **kwargs): pass
+    def on_epoch_end(self, **kwargs): pass
 
 class LR_Scheduler(Callback):
     """
@@ -114,10 +115,16 @@ class StatRecorder(Callback):
     def updateIter(self):
         self.iter_num += 1
 
-    def updateStats(self, stats):
+    def resetRecorder(self):
+        self.iter_num = 0
+        self.epoch_num = 0
+        self.val_stat_dict = {st : [] for st in self.val_stat_list}
+        self.val_iter_indices = []
+    
+    def updateStats(self, stats_dict):
         for st in self.train_stat_list:
             if (st == 'train_loss'):
-                self.train_stat_dict[st].append(stats['train_loss'])
+                self.train_stat_dict[st].append(stats_dict['train_loss'])
         if (self.iter_num % self.val_freq_batches == 0) and (len(self.val_stat_list) != 0):
             self.val_iter_indices.append(self.iter_num)
             torch.set_grad_enabled(False)
@@ -134,6 +141,15 @@ class StatRecorder(Callback):
             if ('val_loss' in self.val_stat_list):
                 self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
 
+    def getLatestStats(self):
+        last_iter = self.val_iter_indices[-1]
+        if 'train_loss' in self.train_stat_dict:
+            latest_train_loss = self.train_stat_dict['train_loss'][last_iter]
+        if 'val_loss' in self.val_stat_dict:
+            latest_val_loss = self.val_stat_dict['val_loss'][-1]
+        return {'train_loss': latest_train_loss, \
+                'val_loss': latest_val_loss}
+
     def plotLoss(self):
         fig = plt.gcf()
         ax = plt.gca()
@@ -149,9 +165,53 @@ class StatRecorder(Callback):
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Loss per Batch')
 
-    def on_batch_end(self, stats):
-        self.updateStats(stats)
+    def on_train_begin(self, **kwargs):
+        self.resetRecorder()
+    
+    def on_batch_end(self, **kwargs):
+        self.updateStats(**kwargs)
         self.updateIter()
+
+class NotebookDisplay(Callback):
+    def __init__(self, model):
+        self.stat_recorder = model.stat_recorder
+        self.stat_show_freq = self.stat_recorder.val_freq_batches
+        self.every_epoch = True
+        self.num_iters = 0
+        self.prog_bar = None
+        self.iter_count = 0
+
+    def initializeBar(self, num_iters, iter_type):
+        if (iter_type == 'epoch'):
+            self.every_epoch = True
+        elif (iter_type == 'batch'):
+            self.every_epoch = False
+        else:
+            self.every_epoch = True
+        self.num_iters = num_iters
+        self.prog_bar = tqdm(total=self.num_iters)
+    
+    def updateBarCount(self):
+        self.prog_bar.update(1)
+
+    def updateBarStats(self):
+        stat_dict = self.stat_recorder.getLatestStats()
+        self.prog_bar.set_postfix({key : '{:.2f}'.format(stat_dict[key]) \
+                for key in stat_dict})
+    
+    def on_batch_end(self, **kwargs):
+        if not self.every_epoch:
+            self.updateBarCount()
+        self.iter_count += 1
+        if (self.iter_count % self.stat_show_freq == 0):
+            self.updateBarStats()
+
+    def on_train_begin(self, **kwargs):
+        self.initializeBar(**kwargs)
+
+    def on_epoch_end(self):
+        if self.every_epoch:
+            self.updateBarCount()
 
 
 
