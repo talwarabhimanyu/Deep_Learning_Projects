@@ -249,7 +249,9 @@ class Trainer():
                 # backward pass
                 loss.backward()
                 self.optimizer.step()
-                stats_dict = {'train_loss' : loss.item()}
+                stats_dict = {'train_loss' : loss.item(),
+                        'outputs' : outputs,
+                        'labels' : labels}
                 for cb in self.callbacks: cb.on_batch_end(stats_dict=stats_dict)
                 if (iter_num%checkpoint_freq == 0):
                     #checkpoint

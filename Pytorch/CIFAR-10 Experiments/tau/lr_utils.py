@@ -138,6 +138,8 @@ class StatRecorder(Callback):
         self.val_stat_dict = {st : [] for st in self.val_stat_list}
         self.val_freq_batches = val_freq_batches
         self.val_iter_indices = []
+        self.running_corrects = 0
+        self.running_count = 0
 
     def setStatList(self, stat_list):
         if 'train_loss' not in stat_list:
@@ -154,21 +156,32 @@ class StatRecorder(Callback):
         for st in self.train_stat_list:
             if (st == 'train_loss'):
                 self.train_stat_dict[st].append(stats_dict['train_loss'])
-        if (self.clock.iter_num % self.val_freq_batches == 0) and (len(self.val_stat_list) != 0):
-            self.val_iter_indices.append(self.clock.iter_num)
-            torch.set_grad_enabled(False)
-            val_iter = 0
-            cum_val_loss = 0
-            for data in iter(self.data_loaders['val']):
-                inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
-                outputs = self.model(inputs)
+            elif (st == 'train_acc'):
+                _, preds = torch.max(stats_dict['outputs'], 1)
+                self.running_count += preds.size(0)
+                self.running_corrects += torch.sum(preds == stats_dict['labels'].data)
+        if (self.clock.iter_num % self.val_freq_batches == 0):
+            # Do a complete pass over the validation set to calculate validation stats
+            if (len(self.val_stat_list) != 0):
+                self.val_iter_indices.append(self.clock.iter_num)
+                torch.set_grad_enabled(False)
+                val_iter = 0
+                cum_val_loss = 0
+                for data in iter(self.data_loaders['val']):
+                    inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
+                    outputs = self.model(inputs)
+                    if ('val_loss' in self.val_stat_list):
+                        loss = self.criterion(outputs, labels)
+                        cum_val_loss += loss.item()
+                    val_iter += 1
+                torch.set_grad_enabled(True)
                 if ('val_loss' in self.val_stat_list):
-                    loss = self.criterion(outputs, labels)
-                    cum_val_loss += loss.item()
-                val_iter += 1
-            torch.set_grad_enabled(True)
-            if ('val_loss' in self.val_stat_list):
-                self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
+                    self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
+            # Calculate running train stats
+            if 'train_acc' in self.train_stat_list:
+                self.train_stat_dict['train_acc'].append(self.running_corrects.double() / self.running_count)
+                self.running_count = 0
+                self.running_corrects = 0
 
     def getLatestStats(self):
         last_iter = -1
@@ -177,6 +190,8 @@ class StatRecorder(Callback):
         latest_stats = {'train_loss' : self.train_stat_dict['train_loss'][last_iter - 1]}
         if 'val_loss' in self.val_stat_dict:
             latest_stats.update({'val_loss' : self.val_stat_dict['val_loss'][-1]})
+        if 'train_acc' in self.train_stat_dict:
+            latest_stats.update({'train_acc' : self.train_stat_dict['train_acc'][-1]})
         return latest_stats
 
     def plotLoss(self):
@@ -208,6 +223,10 @@ class NotebookDisplay(Callback):
         self.every_epoch = True
         self.num_iters = 0
         self.prog_bar = None
+        self.str_format = {'train_loss' : '{:.2f}',
+                'val_loss' : '{:.2f}',
+                'train_acc' : '{0:.2%}',
+                'val_acc' : '{0:.2%}'}
 
     def initializeBar(self, num_iters, iter_type):
         if (iter_type == 'epoch'):
@@ -227,7 +246,7 @@ class NotebookDisplay(Callback):
         show_dict = {}
         if self.every_epoch:
             show_dict.update({'batch' : '{}'.format(self.clock.batch_num)})
-        show_dict.update({key : '{:.2f}'.format(stat_dict[key]) \
+        show_dict.update({key : self.str_format[key].format(stat_dict[key]) \
                 for key in stat_dict})
         self.prog_bar.set_postfix(show_dict)
     
