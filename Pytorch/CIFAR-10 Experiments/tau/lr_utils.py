@@ -167,16 +167,24 @@ class StatRecorder(Callback):
                 torch.set_grad_enabled(False)
                 val_iter = 0
                 cum_val_loss = 0
+                cum_val_count = 0
+                cum_val_corrects = 0
                 for data in iter(self.data_loaders['val']):
                     inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                     outputs = self.model(inputs)
                     if ('val_loss' in self.val_stat_list):
                         loss = self.criterion(outputs, labels)
                         cum_val_loss += loss.item()
+                    if 'val_acc' in self.val_stat_list:
+                        _, preds = torch.max(outputs, 1)
+                        cum_val_count += preds.size(0)
+                        cum_val_corrects += torch.sum(preds == labels.data)
                     val_iter += 1
                 torch.set_grad_enabled(True)
                 if ('val_loss' in self.val_stat_list):
                     self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
+                if ('val_acc' in self.val_stat_list):
+                    self.val_stat_dict['val_acc'].append(cum_val_corrects.double()/cum_val_count)
             # Calculate running train stats
             if 'train_acc' in self.train_stat_list:
                 self.train_stat_dict['train_acc'].append(self.running_corrects.double() / self.running_count)
@@ -190,6 +198,8 @@ class StatRecorder(Callback):
         latest_stats = {'train_loss' : self.train_stat_dict['train_loss'][last_iter - 1]}
         if 'val_loss' in self.val_stat_dict:
             latest_stats.update({'val_loss' : self.val_stat_dict['val_loss'][-1]})
+        if 'val_acc' in self.val_stat_dict:
+            latest_stats.update({'val_acc' : self.val_stat_dict['val_acc'][-1]})
         if 'train_acc' in self.train_stat_dict:
             latest_stats.update({'train_acc' : self.train_stat_dict['train_acc'][-1]})
         return latest_stats
