@@ -22,6 +22,34 @@ class Callback():
     def on_epoch_begin(self, **kwargs): pass
     def on_epoch_end(self, **kwargs): pass
 
+class Clock(Callback):
+    """
+    Universal clock for a model, shared across all attributes and methods
+    of a model instance. Clock increments by 1 at the BEGINNING of an epoch,
+    or batch.
+    """
+    def __init_(self):
+        self.iter_num = 0
+        self.batch_num = 0
+        self.epoch_num = 0
+    
+    def resetClock(self):
+        self.iter_num = 0
+        self.batch_num = 0
+        self.epoch_num = 0
+    
+    def on_train_begin(self, **kwargs):
+        self.resetClock()
+
+    def on_epoch_begin(self, **kwargs):
+        self.epoch_num += 1
+        self.batch_num = 0
+
+    def on_batch_begin(self, **kwargs):
+        self.iter_num += 1
+        self.batch_num += 1
+
+
 class LR_Scheduler(Callback):
     """
     Abstract class which will be inherited by every LR Scheduler class
@@ -36,14 +64,14 @@ class LR_Scheduler(Callback):
     def updateLR(self): pass
 
 class LR_Finder(LR_Scheduler):
-    def __init__(self, optimizer, min_lr=1e-5, max_lr=10.0, num_iter=100):
-        self.step = (log10(max_lr) - log10(min_lr))/num_iter
+    def __init__(self, optimizer, clock, min_lr=1e-5, max_lr=10.0, num_iters=100):
+        self.clock = clock
+        self.step = (log10(max_lr) - log10(min_lr))/num_iters
         self.optimizer = optimizer
         self.init_exp = log10(min_lr)
         self.curr_exp = self.init_exp
         self.smooth_loss = []
         self.lr_series = []
-        self.iter_num = 0
         self.avg_loss = 0
         self.mom = 0.98
         self.curr_lr = 10**self.init_exp
@@ -53,19 +81,18 @@ class LR_Finder(LR_Scheduler):
         for param in self.optimizer.param_groups:
             param['lr'] = self.curr_lr
 
-    def updateLR(self, stats):
-        self.iter_num += 1
-        batch_loss = stats['train_loss']
+    def updateLR(self, stats_dict):
+        batch_loss = stats_dict['train_loss']
         self.avg_loss = self.avg_loss*self.mom + batch_loss*(1 - self.mom)
-        self.smooth_loss.append(self.avg_loss/(1 - self.mom**self.iter_num))
+        self.smooth_loss.append(self.avg_loss/(1 - self.mom**self.clock.iter_num))
         self.lr_series.append(self.curr_lr)
         self.curr_exp += self.step
         self.curr_lr = 10**self.curr_exp
         for param in self.optimizer.param_groups:
             param['lr'] = self.curr_lr
 
-    def on_batch_end(self, stats):
-        self.updateLR(stats)
+    def on_batch_end(self, **kwargs):
+        self.updateLR(**kwargs)
 
     def plotLR(self, xlim=None):
         fig = plt.gcf()
@@ -99,11 +126,10 @@ class LR_Cyclical(LR_Scheduler):
         pass
 
 class StatRecorder(Callback):
-    def __init__(self, device, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_batches=5):
-        self.iter_num = 0
-        self.epoch_num = 0
+    def __init__(self, device, clock, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_batches=5):
         self.device = device
         self.model = model
+        self.clock = clock
         self.criterion = criterion
         self.data_loaders = data_loaders
         self.train_stat_list = list(filter(lambda st: 'train' in st, stat_list))
@@ -113,12 +139,7 @@ class StatRecorder(Callback):
         self.val_freq_batches = val_freq_batches
         self.val_iter_indices = []
 
-    def updateIter(self):
-        self.iter_num += 1
-
     def resetRecorder(self):
-        self.iter_num = 0
-        self.epoch_num = 0
         self.train_stat_dict = {st : [] for st in self.train_stat_list}
         self.val_stat_dict = {st : [] for st in self.val_stat_list}
         self.val_iter_indices = []
@@ -127,8 +148,8 @@ class StatRecorder(Callback):
         for st in self.train_stat_list:
             if (st == 'train_loss'):
                 self.train_stat_dict[st].append(stats_dict['train_loss'])
-        if (self.iter_num % self.val_freq_batches == 0) and (len(self.val_stat_list) != 0):
-            self.val_iter_indices.append(self.iter_num)
+        if (self.clock.iter_num % self.val_freq_batches == 0) and (len(self.val_stat_list) != 0):
+            self.val_iter_indices.append(self.clock.iter_num)
             torch.set_grad_enabled(False)
             val_iter = 0
             cum_val_loss = 0
@@ -146,7 +167,7 @@ class StatRecorder(Callback):
     def getLatestStats(self):
         last_iter = self.val_iter_indices[-1]
         if 'train_loss' in self.train_stat_dict:
-            latest_train_loss = self.train_stat_dict['train_loss'][last_iter]
+            latest_train_loss = self.train_stat_dict['train_loss'][last_iter - 1]
         if 'val_loss' in self.val_stat_dict:
             latest_val_loss = self.val_stat_dict['val_loss'][-1]
         return {'train_loss': latest_train_loss, \
@@ -161,7 +182,7 @@ class StatRecorder(Callback):
                 self.train_stat_dict['train_loss'], linewidth=1.25, color='red', \
                 label='train_loss')
         if 'val_loss' in self.val_stat_list:
-            val_line = ax.plot(self.val_iter_indices, self.val_stat_dict['val_loss'], \
+            val_line = ax.plot(np.asarray(self.val_iter_indices) - 1, self.val_stat_dict['val_loss'], \
                     linewidth=1.25, color='green', label='val_loss')
         _ = ax.legend(loc='upper right')
         ax.set_xlabel('Iterations')
@@ -169,20 +190,18 @@ class StatRecorder(Callback):
 
     def on_train_begin(self, **kwargs):
         self.resetRecorder()
-    
+   
     def on_batch_end(self, **kwargs):
         self.updateStats(**kwargs)
-        self.updateIter()
 
 class NotebookDisplay(Callback):
-    def __init__(self, model):
-        self.stat_recorder = model.stat_recorder
+    def __init__(self, model_setup):
+        self.stat_recorder = model_setup.stat_recorder
+        self.clock = model_setup.clock
         self.stat_show_freq = self.stat_recorder.val_freq_batches
         self.every_epoch = True
         self.num_iters = 0
         self.prog_bar = None
-        self.batch_count = 0
-        self.epoch_count = 0
 
     def initializeBar(self, num_iters, iter_type):
         if (iter_type == 'epoch'):
@@ -194,10 +213,6 @@ class NotebookDisplay(Callback):
         self.num_iters = num_iters
         self.prog_bar = tqdm(total=self.num_iters)
     
-    def resetDisplay(self):
-        self.batch_count = 0
-        self.epoch_count = 0
-    
     def updateBarCount(self):
         self.prog_bar.update(1)
 
@@ -205,25 +220,15 @@ class NotebookDisplay(Callback):
         stat_dict = self.stat_recorder.getLatestStats()
         show_dict = {}
         if self.every_epoch:
-            show_dict.update({'batch' : '{}'.format(self.batch_count)})
+            show_dict.update({'batch' : '{}'.format(self.clock.batch_num)})
         show_dict.update({key : '{:.2f}'.format(stat_dict[key]) \
                 for key in stat_dict})
         self.prog_bar.set_postfix(show_dict)
     
-    def on_train_begin(self, *kwargs):
-        self.resetDisplay()
-    
-    def on_epoch_begin(self, **kwargs):
-        self.epoch_count += 1
-        self.batch_count = 0
-
-    def on_batch_begin(self, **kwargs):
-        self.batch_count += 1
-
     def on_batch_end(self, **kwargs):
         if not self.every_epoch:
             self.updateBarCount()
-        if (self.batch_count % self.stat_show_freq == 0):
+        if (self.clock.batch_num % self.stat_show_freq == 0):
             self.updateBarStats()
 
     def on_train_begin(self, **kwargs):

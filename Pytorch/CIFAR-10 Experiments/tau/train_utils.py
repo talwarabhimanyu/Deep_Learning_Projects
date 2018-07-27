@@ -29,8 +29,14 @@ class NeuralNet():
     loadOptim(optim_name, params): Loads an optimizer of type optim_name and initializes
     it using params.
         optim_name: String. One of 'sgd', 'adam'.
+        
         params: It is of type parameters or a dictionary specifying parameter groups with or
         without group lrs.
+
+        callbacks: This will be initialized with the Neural Net's clock and its stat_recorder. 
+        These two callback must never be removed from the callbacks list. Additional
+        callbacks can be added to the list using addCallbacks() method.
+
     """
     def __init__(self, device, model_name, criterion_name, num_classes, data_loaders, pre_trained=False):
         self.device = device
@@ -43,8 +49,9 @@ class NeuralNet():
         self.model = self.loadModel()
         self.optimizer = self.loadOptim('default', self.model.parameters())
         self.criterion = self.loadCriterion()
-        self.stat_recorder = StatRecorder(self.device, self.model, self.criterion, self.data_loaders)
-        self.callbacks = [self.stat_recorder]
+        self.clock = Clock()
+        self.stat_recorder = StatRecorder(self.device, self.clock, self.model, self.criterion, self.data_loaders)
+        self.callbacks = [self.clock, self.stat_recorder]
 
     def loadModel(self):
         """
@@ -68,6 +75,7 @@ class NeuralNet():
 
     def resetModel(self):
         self.model = self.loadModel()
+        self.clock.resetClock()
     
     def getModel(self):
         return self.model
@@ -96,7 +104,9 @@ class NeuralNet():
             pass
         return optimizer
 
-    def setOptim(self, optim_name, optim_params, **kwargs):
+    def setOptim(self, optim_name, optim_params=None, **kwargs):
+        if optim_params is None:
+            optim_params = self.model.parameters()
         self.optimizer = self.loadOptim(optim_name, optim_params, **kwargs)
 
     def getOptim(self):
@@ -104,10 +114,14 @@ class NeuralNet():
 
     def setScheduler(self, sched_name, **kwargs):
         if sched_name == 'finder':
-            self.scheduler = LR_Finder(self.optimizer, **kwargs)
+            self.scheduler = LR_Finder(self.optimizer, self.clock, **kwargs)
    
-    def setCallbacks(self, callbacks):
-        self.callbacks = callbacks
+    def addCallbacks(self, cb):
+        if isinstance(cb, list):
+            for c in cb:
+                self.callbacks.append(cb)
+        else:
+            self.callbacks.append(cb)
 
     def loadCriterion(self):
         if (self.criterion_name == 'cross_entropy'):
@@ -139,20 +153,20 @@ class NeuralNet():
         """ Add code to handle param_groups """
         self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
 
-    def exploreLR(self, num_iter=200, min_lr=1e-4, max_lr=10.0):
+    def exploreLR(self, num_iters=200, min_lr=1e-4, max_lr=10.0):
         # Save current state of model and optimizer - they can be reverted to
         # original states if required.
         optim_state_dict = self.optimizer.state_dict
         model_state_dict = self.model.state_dict()
         self.resetModel()
         self.setOptim('sgd', self.model.parameters())
-        self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iter=num_iter)
-        self.setCallbacks([self.scheduler])
+        self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iters=num_iters)
+        self.addCallbacks(self.scheduler)
         # Revert to original states here if required.
 
         # train here for num_iter
         trainer = Trainer(self.device, self, model_path='')
-        trainer.train(self.data_loaders, num_iter=num_iter, iter_type='batch')
+        trainer.train(self.data_loaders, num_iters=num_iters, iter_type='batch')
 
         return self.scheduler
 
@@ -205,20 +219,16 @@ class Trainer():
         - iter_type: set to 'epoch' (trains for num_iter epochs) or 'batch' (runs for num_iter batches).
         
         """
-        #progress_bar = tqdm(total=num_iter)
         iter_per_epoch = len(data_loaders)
         checkpoint_freq = floor(iter_per_epoch/checkpoint_per_epoch)
         torch.set_grad_enabled(True)
         iter_count = 0
         max_iters = 1e6
         max_epochs = 1e6
-        stats = {}
-        epoch_desc = 'e {}'
         if (iter_type == 'epoch'):
             max_epochs = num_iters
         else:
             max_iters = num_iters
-            epoch_desc = ''
         epoch = 0
 
         for cb in self.callbacks: cb.on_train_begin(num_iters=num_iters, iter_type=iter_type)
