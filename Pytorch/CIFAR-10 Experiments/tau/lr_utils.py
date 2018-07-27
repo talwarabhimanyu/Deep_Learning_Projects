@@ -19,6 +19,7 @@ class Callback():
     def on_train_begin(self, **kwargs): pass
     def on_batch_begin(self, **kwargs): pass
     def on_batch_end(self, **kwargs): pass
+    def on_epoch_begin(self, **kwargs): pass
     def on_epoch_end(self, **kwargs): pass
 
 class LR_Scheduler(Callback):
@@ -118,6 +119,7 @@ class StatRecorder(Callback):
     def resetRecorder(self):
         self.iter_num = 0
         self.epoch_num = 0
+        self.train_stat_dict = {st : [] for st in self.train_stat_list}
         self.val_stat_dict = {st : [] for st in self.val_stat_list}
         self.val_iter_indices = []
     
@@ -179,7 +181,8 @@ class NotebookDisplay(Callback):
         self.every_epoch = True
         self.num_iters = 0
         self.prog_bar = None
-        self.iter_count = 0
+        self.batch_count = 0
+        self.epoch_count = 0
 
     def initializeBar(self, num_iters, iter_type):
         if (iter_type == 'epoch'):
@@ -191,19 +194,36 @@ class NotebookDisplay(Callback):
         self.num_iters = num_iters
         self.prog_bar = tqdm(total=self.num_iters)
     
+    def resetDisplay(self):
+        self.batch_count = 0
+        self.epoch_count = 0
+    
     def updateBarCount(self):
         self.prog_bar.update(1)
 
     def updateBarStats(self):
         stat_dict = self.stat_recorder.getLatestStats()
-        self.prog_bar.set_postfix({key : '{:.2f}'.format(stat_dict[key]) \
+        show_dict = {}
+        if self.every_epoch:
+            show_dict.update({'batch' : '{}'.format(self.batch_count)})
+        show_dict.update({key : '{:.2f}'.format(stat_dict[key]) \
                 for key in stat_dict})
+        self.prog_bar.set_postfix(show_dict)
     
+    def on_train_begin(self, *kwargs):
+        self.resetDisplay()
+    
+    def on_epoch_begin(self, **kwargs):
+        self.epoch_count += 1
+        self.batch_count = 0
+
+    def on_batch_begin(self, **kwargs):
+        self.batch_count += 1
+
     def on_batch_end(self, **kwargs):
         if not self.every_epoch:
             self.updateBarCount()
-        self.iter_count += 1
-        if (self.iter_count % self.stat_show_freq == 0):
+        if (self.batch_count % self.stat_show_freq == 0):
             self.updateBarStats()
 
     def on_train_begin(self, **kwargs):
