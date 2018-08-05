@@ -1,10 +1,7 @@
-Data/
-data/
-__pycache__/
-.ipynb_checkpoints/
-private_*
-Gradient/
-trash/
-*.csv
-*.mdl
+private*
 *.swp
+.ipynb_checkpoints/
+Data/
+*.pyc
+*.mdl
+*.csv
