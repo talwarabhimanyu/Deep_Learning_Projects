@@ -115,14 +115,17 @@ class NeuralNet():
     def setScheduler(self, sched_name, **kwargs):
         if sched_name == 'finder':
             self.scheduler = LR_Finder(self.optimizer, self.clock, **kwargs)
+        elif sched_name == 'cyclical':
+            self.scheduler = LR_Cyclical(self.optimizer, self.clock, **kwargs)
+        self.setCallbacks(self.scheduler)
    
     def setCallbacks(self, cb):
         self.callbacks = [self.clock, self.stat_recorder]
         if isinstance(cb, list):
             for c in cb:
-                self.callbacks.append(cb)
+                if not c in self.callbacks: self.callbacks.append(cb)
         else:
-            self.callbacks.append(cb)
+            if not cb in self.callbacks: self.callbacks.append(cb)
     
     def setStatList(self, stat_list):
         self.stat_recorder.setStatList(stat_list)
@@ -160,19 +163,18 @@ class NeuralNet():
     def exploreLR(self, num_iters=200, min_lr=1e-4, max_lr=10.0):
         # Save current state of model and optimizer - they can be reverted to
         # original states if required.
-        optim_state_dict = self.optimizer.state_dict
-        model_state_dict = self.model.state_dict()
+        orig_optim_state_dict = self.optimizer.state_dict
+        orig_model_state_dict = self.model.state_dict()
+        orig_cbs = self.callbacks
         self.resetModel()
         self.setOptim('sgd', self.model.parameters())
         self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iters=num_iters)
         self.setStatList([])
-        self.setCallbacks(self.scheduler)
-        # Revert to original states here if required.
-
         # train here for num_iter
         trainer = Trainer(self.device, self, model_path='')
         trainer.train(self.data_loaders, num_iters=num_iters, iter_type='batch')
-
+        # Revert to original states here if required.
+        self.setCallbacks(orig_cbs)
         return self.scheduler
 
     def printModules(self, verbose=True):
@@ -204,6 +206,7 @@ class Trainer():
     def __init__(self, device, model_setup, model_path):
         self.device = device
         self.model = model_setup.getModel()
+        self.scheduler = model_setup.scheduler
         self.criterion = model_setup.getCriterion()
         self.optimizer = model_setup.getOptim()
         self.stat_recorder = model_setup.stat_recorder
@@ -227,7 +230,6 @@ class Trainer():
         iter_per_epoch = len(data_loaders)
         checkpoint_freq = floor(iter_per_epoch/checkpoint_per_epoch)
         torch.set_grad_enabled(True)
-        iter_count = 0
         max_iters = 1e6
         max_epochs = 1e6
         if (iter_type == 'epoch'):
@@ -235,6 +237,7 @@ class Trainer():
         else:
             max_iters = num_iters
         epoch = 0
+        iter_count = 0
 
         for cb in self.callbacks: cb.on_train_begin(num_iters=num_iters, iter_type=iter_type)
         while epoch < max_epochs:
@@ -267,6 +270,18 @@ class Trainer():
     def plotLoss(self):
         self.stat_recorder.plotLoss()
     
+    def plotLR(self):
+        if self.scheduler is not None:
+            fig = plt.gcf()
+            ax = plt.gca()
+            fig.set_size_inches(8,5)
+            fig.set_dpi(80)
+            ax.set_ylabel('Learning Rate')
+            ax.set_xlabel('Iteration')
+            _ = plt.plot(np.arange(len(self.scheduler.lr_series)), 
+                    np.asarray(self.scheduler.lr_series))
+
+
     def SaveCheckpoint(self, model_path):
         state = {'model_dict' : self.model.state_dict(),
                 'optim_dict' : self.optimizer.state_dict(),

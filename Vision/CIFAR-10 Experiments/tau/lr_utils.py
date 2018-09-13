@@ -49,6 +49,9 @@ class Clock(Callback):
         self.iter_num += 1
         self.batch_num += 1
 
+    def iter_time(self):
+        return self.iter_num
+
 
 class LR_Scheduler(Callback):
     """
@@ -94,7 +97,7 @@ class LR_Finder(LR_Scheduler):
     def on_batch_end(self, **kwargs):
         self.updateLR(**kwargs)
 
-    def plotLR(self, xlim=None):
+    def plot_findings(self, xlim=None):
         fig = plt.gcf()
         ax = plt.gca()
         fig.set_size_inches(8,5)
@@ -114,16 +117,39 @@ class LR_Finder(LR_Scheduler):
         """
         This function zooms into the original LRs vs Smoothed Loss plot.
         """
-        self.plotLR(xlim=[min_lr, max_lr])
+        self.plot_findings(xlim=[min_lr, max_lr])
 
 class LR_Cyclical(LR_Scheduler):
     """
     This implements Leslie Smith's Cyclical LR regim. The original paper can be found here:
-    https://arxiv.org/abs/1506.01186    
+    https://arxiv.org/abs/1506.01186
+    Class Attributes:
+    (1) cycle_len: number of iterations after which the learning rate reverts to min_lr
+    (2) policy: one of 'triangle' or 'exp', it describes how learning rate varies over one cycle
+    (3) min_lr/max_lr: specify the range over which the learning rate varies over a cycle
 
     """
-    def __init__(self):
-        pass
+    def __init__(self, optimizer, clock, min_lr=1e-5, max_lr=1.0, cycle_len=20, policy='triangle'):
+        self.clock = clock
+        self.optimizer = optimizer
+        self.cycle_len = cycle_len
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.policy = policy
+        self.lr_series = []
+        if policy == 'triangle': self.step_size = (max_lr - min_lr)*2/cycle_len
+        self.curr_lr = min_lr
+
+    def updateLR(self, **kwargs):
+        self.lr_series.append(self.curr_lr)
+        counter = (self.clock.iter_time() - 1) % self.cycle_len
+        if counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
+        else:                            self.curr_lr -= self.step_size
+        for param in self.optimizer.param_groups:
+            param['lr'] = self.curr_lr
+
+    def on_batch_end(self, **kwargs):
+        self.updateLR(**kwargs)
 
 class StatRecorder(Callback):
     def __init__(self, device, clock, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_batches=5):
