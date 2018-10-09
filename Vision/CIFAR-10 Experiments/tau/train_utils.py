@@ -21,6 +21,9 @@ class NeuralNet():
 
     Class Attributes:
 
+    pred_fn_class: the Prediction Function Class to be used. This will be one of 
+    pre-trained Prediction Function Classes such as 'resnet18'.
+
     optimizer: initialized to SGD with lr=0.01 for all model parameters. This can
     be modified via loadOptim()
 
@@ -38,9 +41,9 @@ class NeuralNet():
         callbacks can be added to the list using addCallbacks() method.
 
     """
-    def __init__(self, device, model_name, criterion_name, num_classes, data_loaders, pre_trained=False):
+    def __init__(self, device, pred_fn_class, criterion_name, num_classes, data_loaders, pre_trained=False):
         self.device = device
-        self.model_name = model_name
+        self.pred_fn_class = pred_fn_class
         self.criterion_name = criterion_name
         self.scheduler = None
         self.num_classes = num_classes
@@ -60,15 +63,15 @@ class NeuralNet():
         number of output nodes in the final layer equal to number of classes.
 
         """
-        if (self.model_name == 'resnet18'):
+        if (self.pred_fn_class == 'resnet18'):
             base_model = models.resnet18(pretrained=self.pre_trained)
-        elif (self.model_name == 'resnet34'):
+        elif (self.pred_fn_class == 'resnet34'):
             base_model = models.resnet34(pretrained=self.pre_trained)
-        elif (self.model_name == 'resnet50'):
+        elif (self.pred_fn_class == 'resnet50'):
             base_model = models.resnet50(pretrained=self.pre_trained)
         else:
             pass
-        if ('resnet' in self.model_name):
+        if ('resnet' in self.pred_fn_class):
             base_model.avgpool = nn.AdaptiveAvgPool2d(1)
             base_model.fc = nn.Linear(base_model.fc.in_features, self.num_classes)
         return base_model
@@ -194,7 +197,7 @@ class NeuralNet():
                                 print((8*' ') + '|_______ ' + name4)
 
 
-# Given a model (an object inherited from nn.Module), this model will handle 
+# Given a model (an object inherited from nn.Module), the Trainer class will handle 
 # training, hyperparameter tuning, evaluation, logging information.
 class Trainer():
     """
