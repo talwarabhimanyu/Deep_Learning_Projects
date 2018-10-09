@@ -11,9 +11,11 @@ I am writing my own wrapper nameed 'tau' which sits on top of PyTorch and allows
 Tau allows the user to train a prediction function (such as a Neural Net) for a specified number of iterations under a learning rate ('lr') regime in which the 'lr' increases from a specified 'min_lr' to a 'max_lr' in a log-linear manner. It then plots smoothed training loss versus learning rates (refer plot below). This plot helps in determining the maximum learning rate which may be used for training. It also allows the user to zoom into a particular section of the plot (see Figure 2 below).
 
 Figure 1: Smoother Loss vs Learning Rate Plot Produced by Tau
+
 ![lr_curve](https://github.com/talwarabhimanyu/Deep_Learning_Projects/blob/master/Vision/data/lr_curve.png)
 
 Figure 2: Zoomed-in View of a Section of the LR Plot from Figure 1
+
 ![lr_curve_zoom](https://github.com/talwarabhimanyu/Deep_Learning_Projects/blob/master/Vision/data/lr_curve_zoom.png)
 
 ### CNN-Speed-Up
