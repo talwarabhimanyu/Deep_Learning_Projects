@@ -6,6 +6,7 @@ import re
 import shutil
 import os
 from tqdm import tqdm_notebook as tqdm
+import numpy as np
 
 # This module contains utilities for loading and processing data.
 class SingleLabelImages(Dataset):
