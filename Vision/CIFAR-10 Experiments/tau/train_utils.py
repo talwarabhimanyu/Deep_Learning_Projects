@@ -74,6 +74,7 @@ class NeuralNet():
         if ('resnet' in self.pred_fn_class):
             base_model.avgpool = nn.AdaptiveAvgPool2d(1)
             base_model.fc = nn.Linear(base_model.fc.in_features, self.num_classes)
+        base_model = base_model.to(device)
         return base_model
 
     def resetModel(self):
