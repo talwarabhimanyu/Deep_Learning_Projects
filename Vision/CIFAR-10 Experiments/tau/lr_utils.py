@@ -152,7 +152,7 @@ class LR_Cyclical(LR_Scheduler):
         self.updateLR(**kwargs)
 
 class StatRecorder(Callback):
-    def __init__(self, device, clock, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_batches=5):
+    def __init__(self, device, clock, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_per_epoch=10):
         self.device = device
         self.model = model
         self.clock = clock
@@ -162,7 +162,10 @@ class StatRecorder(Callback):
         self.train_stat_dict = {st : [] for st in self.train_stat_list}
         self.val_stat_list = list(filter(lambda st: 'val' in st, stat_list))
         self.val_stat_dict = {st : [] for st in self.val_stat_list}
-        self.val_freq_batches = val_freq_batches
+        batch_size = data_loaders['train'].batch_size
+        epoch_size_in_batches = len(data_loaders['train'].dataset)/batch_size
+        self.val_freq_batches = int(epoch_size_in_batches/val_freq_per_epoch)
+        if self.val_freq_batches == 0: self.val_freq_batches = 1
         self.val_iter_indices = []
         self.running_corrects = 0
         self.running_count = 0
