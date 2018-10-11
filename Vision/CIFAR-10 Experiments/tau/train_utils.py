@@ -22,7 +22,8 @@ class NeuralNet():
     Class Attributes:
 
     pred_fn_class: the Prediction Function Class to be used. This will be one of 
-    pre-trained Prediction Function Classes such as 'resnet18'.
+    pre-trained Prediction Function Classes such as 'resnet18', or a custom
+    Neural Net.
 
     optimizer: initialized to SGD with lr=0.01 for all model parameters. This can
     be modified via loadOptim()
@@ -50,7 +51,7 @@ class NeuralNet():
         self.data_loaders = data_loaders
         self.pre_trained = pre_trained
         self.model = self.loadModel()
-        self.optimizer = self.loadOptim('default', self.model.parameters())
+        self.optimizer = self.loadOptim('sgd', self.model.parameters())
         self.criterion = self.loadCriterion()
         self.clock = Clock()
         self.stat_recorder = StatRecorder(self.device, self.clock, self.model, self.criterion, self.data_loaders)
@@ -86,26 +87,42 @@ class NeuralNet():
 
     def loadOptim(self, optim_name, optim_params, **kwargs):
         """
-        Loads an optimizer for this model.
+        Loads an optimizer for this intance into self.optimizer
+        INPUT
+        =======
+        optim_name:     String, one of the following
+                        * 'sgd'
+                        * 'adam'
+
+        optim_params:   torch.nn.parameter object
+        
+        **kwargs:       Keyword arguments
+                        * 'lr':  float, initial learning 
+                                 rate for sgd, adam
+                                 Default: 0.01
+                        * 'mom': float, momentum for
+                                 sgd
+                                 Default: 0.5
+
+        RETURNS
+        =======
+        optimizer:      torch.optim.optimizer object
 
         """
-        default_lr = 0.01
-        if 'default_lr' in kwargs:
-            default_lr = kwargs['default_lr']
-        default_mom = 0.0
-        if 'default_mom' in kwargs:
-            default_mom = kwargs['default_mom']
+        lr = 0.01
+        if 'lr' in kwargs:
+            lr = kwargs['lr']
+        mom = 0.5
+        if 'mom' in kwargs:
+            mom = kwargs['mom']
 
-        if (optim_name == 'default'):
-            optimizer = optim.SGD(optim_params, lr=default_lr, \
-                    momentum=default_mom)
-        elif (optim_name == 'sgd'):
-            optimizer = optim.SGD(optim_params, lr=default_lr, \
-                    momentum=default_mom)
+        if (optim_name == 'sgd'):
+            optimizer = optim.SGD(optim_params, lr=lr, \
+                    momentum=mom)
         elif (optim_name == 'adam'):
-            optimizer = optim.Adam(optim_params, lr=default_lr)
+            optimizer = optim.Adam(optim_params, lr=lr)
         else:
-            pass
+            raise NotImplementedError
         return optimizer
 
     def setOptim(self, optim_name, optim_params=None, **kwargs):
@@ -117,6 +134,24 @@ class NeuralNet():
         return self.optimizer
 
     def setScheduler(self, sched_name, **kwargs):
+        """
+        INPUTS
+        =======
+        sched_name:     String, one of the following
+                        * 'finder'
+                        * 'cyclical', varies lr between [min_lr, max_lr]
+                           which are specified as keyword args.
+        **kwargs:       Key word arguments
+                        * 'min_lr' float, used for 'cyclical'
+                        * 'max_lr' float, used for 'cyclical'
+                        * 'cycle_len' positive integer, used for 'cyclical'
+
+        RETURNS
+        =======
+        Does not return anything. Sets self.scheduler for this instance to
+        the appropriate scheduler object.
+
+        """
         if sched_name == 'finder':
             self.scheduler = LR_Finder(self.optimizer, self.clock, **kwargs)
         elif sched_name == 'cyclical':
