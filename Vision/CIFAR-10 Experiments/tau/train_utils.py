@@ -19,23 +19,30 @@ from tau.lr_utils import *
 class NeuralNet():
     """
 
-    Class Attributes:
+    CLASS ATTRIBUTES:
+    ==================
 
-    pred_fn_class: the Prediction Function Class to be used. This will be one of 
-    pre-trained Prediction Function Classes such as 'resnet18', or a custom
-    Neural Net.
+    pred_fn_class:  Type: String
+                    Decsription: Name of the Prediction Function Class, such as 'resnet18', which
+                    will be included in this model.
 
-    optimizer: initialized to SGD with lr=0.01 for all model parameters. This can
-    be modified via loadOptim()
+    pred_fn:        Type: nn.module
+                    Description: the Prediction Function Class to be used. This will be an
+                    instance of of pre-trained Pred. Functions such as torchvision.models.resnet18, 
+                    or a custom Neural Net object which inherits from nn.module.
 
-    Class Methods:
+    optimizer:      Type: torch.optim.optimizer
+                    Description: by default, initialized to SGD with lr=0.01 for all model 
+                    parameters. Optimizer can be modified via self.setOptim()
+
+    criterion:      Type: one of PyTorch's loss objects such as nn.CrossEntropyLoss
+
+    CLASS METHODS:
+    ================
+    (See individual methods for docs on input and return types).
 
     loadOptim(optim_name, params): Loads an optimizer of type optim_name and initializes
     it using params.
-        optim_name: String. One of 'sgd', 'adam'.
-        
-        params: It is of type parameters or a dictionary specifying parameter groups with or
-        without group lrs.
 
         callbacks: This will be initialized with the Neural Net's clock and its stat_recorder. 
         These two callback must never be removed from the callbacks list. Additional
@@ -50,14 +57,14 @@ class NeuralNet():
         self.num_classes = num_classes
         self.data_loaders = data_loaders
         self.pre_trained = pre_trained
-        self.model = self.loadModel()
-        self.optimizer = self.loadOptim('sgd', self.model.parameters())
+        self.pred_fn = self.loadPredFn()
+        self.optimizer = self.loadOptim('sgd', self.pred_fn.parameters())
         self.criterion = self.loadCriterion()
         self.clock = Clock()
-        self.stat_recorder = StatRecorder(self.device, self.clock, self.model, self.criterion, self.data_loaders)
+        self.stat_recorder = StatRecorder(self.device, self.clock, self.pred_fn, self.criterion, self.data_loaders)
         self.callbacks = [self.clock, self.stat_recorder]
 
-    def loadModel(self):
+    def loadPredFn(self):
         """
         Loads model architecture along with pre-trained parameters (if asked). Replaces
         plain vanilla pooling with adaptive pooling for resnet models, and sets the 
@@ -65,25 +72,25 @@ class NeuralNet():
 
         """
         if (self.pred_fn_class == 'resnet18'):
-            base_model = models.resnet18(pretrained=self.pre_trained)
+            pred_fn = models.resnet18(pretrained=self.pre_trained)
         elif (self.pred_fn_class == 'resnet34'):
-            base_model = models.resnet34(pretrained=self.pre_trained)
+            pred_fn = models.resnet34(pretrained=self.pre_trained)
         elif (self.pred_fn_class == 'resnet50'):
-            base_model = models.resnet50(pretrained=self.pre_trained)
+            pred_fn = models.resnet50(pretrained=self.pre_trained)
         else:
-            pass
+            raise NotImplementedError
         if ('resnet' in self.pred_fn_class):
-            base_model.avgpool = nn.AdaptiveAvgPool2d(1)
-            base_model.fc = nn.Linear(base_model.fc.in_features, self.num_classes)
-        base_model = base_model.to(self.device)
-        return base_model
+            pred_fn.avgpool = nn.AdaptiveAvgPool2d(1)
+            pred_fn.fc = nn.Linear(pred_fn.fc.in_features, self.num_classes)
+        pred_fn = pred_fn.to(self.device)
+        return pred_fn
 
     def resetModel(self):
-        self.model = self.loadModel()
+        self.pred_fn = self.loadPredFn()
         self.clock.resetClock()
     
-    def getModel(self):
-        return self.model
+    def getPredFn(self):
+        return self.pred_fn
 
     def loadOptim(self, optim_name, optim_params, **kwargs):
         """
@@ -127,7 +134,7 @@ class NeuralNet():
 
     def setOptim(self, optim_name, optim_params=None, **kwargs):
         if optim_params is None:
-            optim_params = self.model.parameters()
+            optim_params = self.pred_fn.parameters()
         self.optimizer = self.loadOptim(optim_name, optim_params, **kwargs)
 
     def getOptim(self):
@@ -188,25 +195,25 @@ class NeuralNet():
 
         """
         # First set requires_grad=True for all parameters.
-        for param in self.model.parameters():
+        for param in self.pred_fn.parameters():
             param.requires_grad = True
         # Iterate over freeze_modules to set their requires_grad=False
-        for name, module in self.model.named_modules():
+        for name, module in self.pred_fn.named_modules():
             if (name in freeze_modules):
                 for param in module.parameters():
                     param.requires_grad = False
         # Recreate optimizer with only those parameters for which requires_grad = True
         """ Add code to handle param_groups """
-        self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.model.parameters()))
+        self.optimizer = self.loadOptim(filter(lambda p: p.requires_grad, self.pred_fn.parameters()))
 
     def exploreLR(self, num_iters=200, min_lr=1e-4, max_lr=10.0):
         # Save current state of model and optimizer - they can be reverted to
         # original states if required.
         orig_optim_state_dict = self.optimizer.state_dict
-        orig_model_state_dict = self.model.state_dict()
+        orig_model_state_dict = self.pred_fn.state_dict()
         orig_cbs = self.callbacks
         self.resetModel()
-        self.setOptim('sgd', self.model.parameters())
+        self.setOptim('sgd', self.pred_fn.parameters())
         self.setScheduler('finder', min_lr=min_lr, max_lr=max_lr, num_iters=num_iters)
         self.setStatList([])
         # train here for num_iter
@@ -220,7 +227,7 @@ class NeuralNet():
         # Display names of modules of this model instance. If verbose is True, then
         # only display immediate children modules, otherwise display a nested heirachy
         # of depth 4.
-        for name, module in self.model.named_children():
+        for name, module in self.pred_fn.named_children():
             print('Module: ' + name)
             if not verbose:
                 for name1, module1 in module.named_children():
@@ -242,18 +249,18 @@ class Trainer():
 
     model_arch: The model architecture.
     """
-    def __init__(self, device, model_setup, model_path):
+    def __init__(self, device, model, model_path):
         self.device = device
-        self.model = model_setup.getModel()
-        self.scheduler = model_setup.scheduler
-        self.criterion = model_setup.getCriterion()
-        self.optimizer = model_setup.getOptim()
-        self.stat_recorder = model_setup.stat_recorder
-        self.display = NotebookDisplay(model_setup)
-        if model_setup.callbacks is None:
+        self.pred_fn = model.getPredFn()
+        self.scheduler = model.scheduler
+        self.criterion = model.getCriterion()
+        self.optimizer = model.getOptim()
+        self.stat_recorder = model.stat_recorder
+        self.display = NotebookDisplay(model)
+        if model.callbacks is None:
             self.callbacks = []
         else:
-            self.callbacks = model_setup.callbacks
+            self.callbacks = model.callbacks
         self.callbacks.append(self.display)
     def train(self, data_loaders, num_iters=1, iter_type='epoch', 
             checkpoint_per_epoch=1, stat_freq_batches=1, update_prog_bar_iter=5,
@@ -286,7 +293,7 @@ class Trainer():
                 inputs, labels = data['image'].to(self.device), data['label'].long().to(self.device)
                 # forward pass
                 self.optimizer.zero_grad()
-                outputs = self.model(inputs)
+                outputs = self.pred_fn(inputs)
                 loss = self.criterion(outputs, labels)
                 # backward pass
                 loss.backward()
@@ -322,7 +329,7 @@ class Trainer():
 
 
     def SaveCheckpoint(self, model_path):
-        state = {'model_dict' : self.model.state_dict(),
+        state = {'model_dict' : self.pred_fn.state_dict(),
                 'optim_dict' : self.optimizer.state_dict(),
                 'state_epoch' : state_epoch}
         torch.save(state, model_path)
