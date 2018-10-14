@@ -21,6 +21,7 @@ class Callback():
     def on_batch_end(self, **kwargs): pass
     def on_epoch_begin(self, **kwargs): pass
     def on_epoch_end(self, **kwargs): pass
+    def on_train_end(self, **kwargs): pass
 
 class Clock(Callback):
     """
@@ -152,10 +153,11 @@ class LR_Cyclical(LR_Scheduler):
         self.updateLR(**kwargs)
 
 class StatRecorder(Callback):
-    def __init__(self, device, clock, model, criterion, data_loaders, stat_list=['train_loss', 'val_loss'], val_freq_per_epoch=10):
+    def __init__(self, device, clock, model, criterion, data_loaders, save_stats, stat_list=['train_loss', 'val_loss'], val_freq_per_epoch=10):
         self.device = device
         self.model = model
         self.clock = clock
+        self.save_stats = save_stats
         self.criterion = criterion
         self.data_loaders = data_loaders
         self.train_stat_list = list(filter(lambda st: 'train' in st, stat_list))
@@ -188,7 +190,7 @@ class StatRecorder(Callback):
             elif (st == 'train_acc'):
                 _, preds = torch.max(stats_dict['outputs'], 1)
                 self.running_count += preds.size(0)
-                self.running_corrects += torch.sum(preds == stats_dict['labels'].data)
+                self.running_corrects += torch.sum(preds == stats_dict['labels'].data).item()
         if (self.clock.iter_num % self.val_freq_batches == 0):
             # Do a complete pass over the validation set to calculate validation stats
             if (len(self.val_stat_list) != 0):
@@ -207,16 +209,16 @@ class StatRecorder(Callback):
                     if 'val_acc' in self.val_stat_list:
                         _, preds = torch.max(outputs, 1)
                         cum_val_count += preds.size(0)
-                        cum_val_corrects += torch.sum(preds == labels.data)
+                        cum_val_corrects += torch.sum(preds == labels.data).item()
                     val_iter += 1
                 torch.set_grad_enabled(True)
                 if ('val_loss' in self.val_stat_list):
                     self.val_stat_dict['val_loss'].append(cum_val_loss/val_iter)
                 if ('val_acc' in self.val_stat_list):
-                    self.val_stat_dict['val_acc'].append(cum_val_corrects.double()/cum_val_count)
+                    self.val_stat_dict['val_acc'].append(cum_val_corrects/cum_val_count)
             # Calculate running train stats
             if 'train_acc' in self.train_stat_list:
-                self.train_stat_dict['train_acc'].append(self.running_corrects.double() / self.running_count)
+                self.train_stat_dict['train_acc'].append(self.running_corrects / self.running_count)
                 self.running_count = 0
                 self.running_corrects = 0
 
@@ -248,11 +250,34 @@ class StatRecorder(Callback):
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Loss per Batch')
 
+    def writeStats(self, **kwargs):
+        if self.save_stats:
+            config_name = kwargs['config_name']
+            with open(config_name + '_train_loss.csv', 'w') as f:
+                writer = csv.writer(f,delimiter=",", lineterminator='\n')
+                writer.writerow(['iteration','train_loss'])
+                for idx, loss in enumerate(self.train_stat_dict['train_loss']):
+                    row = ['{}'.format(idx+1),'{:.4f}'.format(loss)]
+                    writer.writerow(row)
+            if self.val_stat_dict:
+                self.val_stat_dict.update({'iteration':self.val_iter_indices})
+                if 'train_acc' in self.train_stat_dict:
+                    self.val_stat_dict.update({'train_acc':self.train_stat_dict['train_acc']})
+
+                with open(config_name + '_other_stats.csv', 'w') as f:
+                    writer = csv.writer(f, delimiter=",", lineterminator='\n')
+                    writer.writerow(self.val_stat_dict.keys())
+                    writer.writerows(zip(*self.val_stat_dict.values()))
+
     def on_train_begin(self, **kwargs):
         self.resetRecorder()
    
     def on_batch_end(self, **kwargs):
         self.updateStats(**kwargs)
+
+    def on_train_end(self, **kwargs):
+        # Write stats to file
+        self.writeStats(**kwargs)
 
 class NotebookDisplay(Callback):
     def __init__(self, model_setup):

@@ -49,7 +49,7 @@ class NeuralNet():
         callbacks can be added to the list using addCallbacks() method.
 
     """
-    def __init__(self, device, pred_fn_class, criterion_name, num_classes, data_loaders, pre_trained=False):
+    def __init__(self, device, pred_fn_class, criterion_name, num_classes, data_loaders, pre_trained=False, save_stats=True):
         self.device = device
         self.pred_fn_class = pred_fn_class
         self.criterion_name = criterion_name
@@ -61,7 +61,7 @@ class NeuralNet():
         self.optimizer = self.loadOptim('sgd', self.pred_fn.parameters())
         self.criterion = self.loadCriterion()
         self.clock = Clock()
-        self.stat_recorder = StatRecorder(self.device, self.clock, self.pred_fn, self.criterion, self.data_loaders)
+        self.stat_recorder = StatRecorder(self.device, self.clock, self.pred_fn, self.criterion, self.data_loaders, save_stats)
         self.callbacks = [self.clock, self.stat_recorder]
         self.batch_size = data_loaders['train'].batch_size
         self.epoch_size_in_batches = int(len(data_loaders['train'].dataset)/self.batch_size)
@@ -128,7 +128,7 @@ class NeuralNet():
         weight_decay = 0.0
         if 'weight_decay' in kwargs:
             weight_decay = kwargs['weight_decay']
-
+        self.optim_name = 'optim({}, lr={}, mom={})'.format(optim_name, lr, mom)
         if (optim_name == 'sgd'):
             optimizer = optim.SGD(optim_params, lr=lr, \
                     momentum=mom, weight_decay=weight_decay)
@@ -271,6 +271,9 @@ class Trainer():
         else:
             self.callbacks = model.callbacks
         self.callbacks.append(self.display)
+        self.batch_size = model.batch_size
+        self.config_name = '{}_{}_'.format(model.pred_fn_class, model.optim_name)
+
     def train(self, data_loaders, num_iters=1, iter_type='epoch', 
             checkpoint_per_epoch=1, stat_freq_batches=1, update_prog_bar_iter=5,
             verbose=True):
@@ -293,7 +296,7 @@ class Trainer():
             max_iters = num_iters
         epoch = 0
         iter_count = 0
-
+        self.config_name += 'train(batch_size={}, iters={} {})'.format(self.batch_size, num_iters, iter_type)
         for cb in self.callbacks: cb.on_train_begin(num_iters=num_iters, iter_type=iter_type)
         while epoch < max_epochs:
             for cb in self.callbacks: cb.on_epoch_begin()
@@ -321,6 +324,7 @@ class Trainer():
                 break
             epoch += 1
             for cb in self.callbacks: cb.on_epoch_end()
+        for cb in self.callbacks: cb.on_train_end(config_name=self.config_name)
 
     def plotLoss(self):
         self.stat_recorder.plotLoss()
