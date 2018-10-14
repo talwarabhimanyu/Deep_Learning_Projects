@@ -63,6 +63,9 @@ class NeuralNet():
         self.clock = Clock()
         self.stat_recorder = StatRecorder(self.device, self.clock, self.pred_fn, self.criterion, self.data_loaders)
         self.callbacks = [self.clock, self.stat_recorder]
+        self.batch_size = data_loaders['train'].batch_size
+        self.epoch_size_in_batches = int(len(data_loaders['train'].dataset)/self.batch_size)
+
 
     def loadPredFn(self):
         """
@@ -122,10 +125,13 @@ class NeuralNet():
         mom = 0.5
         if 'mom' in kwargs:
             mom = kwargs['mom']
+        weight_decay = 0.0
+        if 'weight_decay' in kwargs:
+            weight_decay = kwargs['weight_decay']
 
         if (optim_name == 'sgd'):
             optimizer = optim.SGD(optim_params, lr=lr, \
-                    momentum=mom)
+                    momentum=mom, weight_decay=weight_decay)
         elif (optim_name == 'adam'):
             optimizer = optim.Adam(optim_params, lr=lr)
         else:
@@ -162,6 +168,9 @@ class NeuralNet():
         if sched_name == 'finder':
             self.scheduler = LR_Finder(self.optimizer, self.clock, **kwargs)
         elif sched_name == 'cyclical':
+            if 'cycle_len' not in kwargs:
+                cycle_len = self.epoch_size_in_batches*2
+                kwargs.update({'cycle_len':cycle_len})
             self.scheduler = LR_Cyclical(self.optimizer, self.clock, **kwargs)
         self.setCallbacks(self.scheduler)
    
