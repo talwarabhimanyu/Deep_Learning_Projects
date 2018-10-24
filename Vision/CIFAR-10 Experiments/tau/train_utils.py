@@ -247,6 +247,24 @@ class NeuralNet():
                             print((8*' ') + '|_____' + name3)
                             for name4, module4 in module3.named_children():
                                 print((8*' ') + '|_______ ' + name4)
+    
+    def printFirstLayerFilters(self):
+        layer_matrix = self.optimizer.param_groups[0]['params'][0].detach().numpy()
+        num_filters = layer_matrix.shape[0]
+        layer_matrix = layer_matrix.transpose(0,2,3,1)
+        num_cols = 8
+        num_rows = int(num_filters/num_cols)
+        fig, ax = plt.subplots(num_rows, num_cols)
+        fig.set_size_inches(num_cols*1.25, num_rows*1.25)
+        for i in range(num_filters):
+            im = layer_matrix[i, :, :, :]
+            im = im - im.min()
+            im = im/im.max()
+            r = i // num_cols
+            c = i % num_cols
+            ax[r,c].imshow(im)
+            ax[r,c].set_xticks([])
+            ax[r,c].set_yticks([])
 
 
 # Given a model (an object inherited from nn.Module), the Trainer class will handle 
