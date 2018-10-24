@@ -130,7 +130,7 @@ class LR_Cyclical(LR_Scheduler):
     (3) min_lr/max_lr: specify the range over which the learning rate varies over a cycle
 
     """
-    def __init__(self, optimizer, clock, min_lr=1e-5, max_lr=1.0, cycle_len=20, policy='triangle'):
+    def __init__(self, optimizer, clock, cycle_len, min_lr=1e-5, max_lr=1.0, policy='triangle'):
         self.clock = clock
         self.optimizer = optimizer
         self.cycle_len = cycle_len
@@ -223,7 +223,7 @@ class StatRecorder(Callback):
                 self.running_corrects = 0
 
     def getLatestStats(self):
-        last_iter = -1
+        last_iter = 0
         if len(self.val_iter_indices) != 0:
             last_iter = self.val_iter_indices[-1]
         latest_stats = {'train_loss' : self.train_stat_dict['train_loss'][last_iter - 1]}
