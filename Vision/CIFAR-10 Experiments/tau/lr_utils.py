@@ -14,6 +14,7 @@ import shutil
 import re
 from tqdm import tqdm_notebook as tqdm
 import gc
+import imageio
 
 class Callback():
     def on_train_begin(self, **kwargs): pass
@@ -52,6 +53,9 @@ class Clock(Callback):
 
     def iter_time(self):
         return self.iter_num
+    
+    def epoch_time(self):
+        return self.epoch_num
 
 
 class LR_Scheduler(Callback):
@@ -151,6 +155,48 @@ class LR_Cyclical(LR_Scheduler):
 
     def on_batch_end(self, **kwargs):
         self.updateLR(**kwargs)
+
+class WeightWatcher(Callback):
+    def __init__(self, device, clock, optimizer):
+        self.optimizer = optimizer
+        self.device = device
+        self.clock = clock
+        self.epoch_count = 0
+    
+    def saveWeights(self):
+        layer_matrix = self.optimizer.param_groups[0]['params'][0].detach().numpy()
+        num_filters = layer_matrix.shape[0]
+        layer_matrix = layer_matrix.transpose(0,2,3,1)
+        num_cols = 8
+        num_rows = int(num_filters/num_cols)
+        plt.ioff()
+        fig, ax = plt.subplots(num_rows, num_cols)
+        fig.set_size_inches(num_cols*1.25, num_rows*1.25)
+        for i in range(num_filters):
+            im = layer_matrix[i, :, :, :]
+            im = im - im.min()
+            im = im/im.max()
+            r = i // num_cols
+            c = i % num_cols
+            ax[r,c].imshow(im)
+            ax[r,c].set_xticks([])
+            ax[r,c].set_yticks([])
+        self.epoch_count += 1
+        plt.savefig('epoch_{}_weights.png'.format(self.clock.epoch_time()), pad_inches=0.02)
+        plt.close(fig)
+        plt.ion()
+    
+    def makeGIF(self):
+        images = []
+        for i in range(self.epoch_count):
+            images.append(imageio.imread('epoch_{}_weights.png'.format(i+1)))
+        imageio.mimsave('weights.gif', images)
+
+    def on_epoch_end(self):
+        self.saveWeights()
+    
+    def on_train_end(self, **kwargs):
+        self.makeGIF()
 
 class StatRecorder(Callback):
     def __init__(self, device, clock, model, criterion, data_loaders, save_stats, stat_list=['train_loss', 'val_loss'], val_freq_per_epoch=10):

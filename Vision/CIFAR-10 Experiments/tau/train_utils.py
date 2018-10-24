@@ -61,8 +61,9 @@ class NeuralNet():
         self.optimizer = self.loadOptim('sgd', self.pred_fn.parameters())
         self.criterion = self.loadCriterion()
         self.clock = Clock()
+        self.weight_watcher = WeightWatcher(self.device, self.clock, self.optimizer) 
         self.stat_recorder = StatRecorder(self.device, self.clock, self.pred_fn, self.criterion, self.data_loaders, save_stats)
-        self.callbacks = [self.clock, self.stat_recorder]
+        self.callbacks = [self.clock, self.stat_recorder, self.weight_watcher]
         self.batch_size = data_loaders['train'].batch_size
         self.epoch_size_in_batches = int(len(data_loaders['train'].dataset)/self.batch_size)
 
@@ -175,7 +176,7 @@ class NeuralNet():
         self.setCallbacks(self.scheduler)
    
     def setCallbacks(self, cb):
-        self.callbacks = [self.clock, self.stat_recorder]
+        self.callbacks = [self.clock, self.stat_recorder, self.weight_watcher]
         if isinstance(cb, list):
             for c in cb:
                 if not c in self.callbacks: self.callbacks.append(cb)
