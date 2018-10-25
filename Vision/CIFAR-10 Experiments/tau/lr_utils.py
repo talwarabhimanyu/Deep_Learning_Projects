@@ -164,7 +164,7 @@ class WeightWatcher(Callback):
         self.epoch_count = 0
     
     def saveWeights(self):
-        layer_matrix = self.optimizer.param_groups[0]['params'][0].detach().numpy()
+        layer_matrix = self.optimizer.param_groups[0]['params'][0].detach().to(self.device).numpy()
         num_filters = layer_matrix.shape[0]
         layer_matrix = layer_matrix.transpose(0,2,3,1)
         num_cols = 8
