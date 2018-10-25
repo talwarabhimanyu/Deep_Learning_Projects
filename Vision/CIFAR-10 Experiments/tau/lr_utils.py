@@ -182,6 +182,7 @@ class WeightWatcher(Callback):
             ax[r,c].set_xticks([])
             ax[r,c].set_yticks([])
         self.epoch_count += 1
+        plt.suptitle('Epoch {}'.format(self.epoch_count), fontsize=18)
         plt.savefig('epoch_{}_weights.png'.format(self.clock.epoch_time()), pad_inches=0.02)
         plt.close(fig)
         plt.ion()
@@ -190,7 +191,7 @@ class WeightWatcher(Callback):
         images = []
         for i in range(self.epoch_count):
             images.append(imageio.imread('epoch_{}_weights.png'.format(i+1)))
-        imageio.mimsave('weights.gif', images)
+        imageio.mimsave('weights.gif', images, duration=0.2)
 
     def on_epoch_end(self):
         self.saveWeights()
