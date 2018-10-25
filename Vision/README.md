@@ -21,7 +21,7 @@ Tau allows the user to train a prediction function (such as a Neural Net) for a 
 #### Weight Visualization
 Tau allows visualizing evolution of weights learnt by filters in the first convolutional layer. An example GIF file created by Tau can be seen below:
 
-<img src="https://github.com/talwarabhimanyu/Deep_Learning_Projects/blob/master/Vision/data/weights.gif"/>
+<img src="https://github.com/talwarabhimanyu/Deep_Learning_Projects/blob/master/Vision/data/weights.gif" width="100" height="100"/>
 
 ### CNN-Speed-Up
 A comparison of my implementations (in Python) of forward/backward passes through a Convolution Layer. Some highlights:
