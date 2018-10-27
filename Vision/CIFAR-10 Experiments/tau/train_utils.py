@@ -49,7 +49,7 @@ class NeuralNet():
         callbacks can be added to the list using addCallbacks() method.
 
     """
-    def __init__(self, device, pred_fn_class, criterion_name, num_classes, data_loaders, pre_trained=False, save_stats=True):
+    def __init__(self, device, pred_fn_class, criterion_name, num_classes, data_loaders, pre_trained=False, save_stats=True, save_weights=False):
         self.device = device
         self.pred_fn_class = pred_fn_class
         self.criterion_name = criterion_name
@@ -63,7 +63,9 @@ class NeuralNet():
         self.clock = Clock()
         self.weight_watcher = WeightWatcher(self.device, self.clock, self.optimizer) 
         self.stat_recorder = StatRecorder(self.device, self.clock, self.pred_fn, self.criterion, self.data_loaders, save_stats)
-        self.callbacks = [self.clock, self.stat_recorder, self.weight_watcher]
+        self.default_cbs = [self.clock, self.stat_recorder]
+        if save_weights: self.default_cbs += [self.weight_watcher]
+        self.callbacks = self.default_cbs
         self.batch_size = data_loaders['train'].batch_size
         self.epoch_size_in_batches = int(len(data_loaders['train'].dataset)/self.batch_size)
 
@@ -113,7 +115,7 @@ class NeuralNet():
                                  Default: 0.01
                         * 'mom': float, momentum for
                                  sgd
-                                 Default: 0.5
+                                 Default: 0.0
 
         RETURNS
         =======
@@ -123,7 +125,7 @@ class NeuralNet():
         lr = 0.01
         if 'lr' in kwargs:
             lr = kwargs['lr']
-        mom = 0.5
+        mom = 0.0
         if 'mom' in kwargs:
             mom = kwargs['mom']
         weight_decay = 0.0
@@ -170,13 +172,13 @@ class NeuralNet():
             self.scheduler = LR_Finder(self.optimizer, self.clock, **kwargs)
         elif sched_name == 'cyclical':
             if 'cycle_len' not in kwargs:
-                cycle_len = self.epoch_size_in_batches*2
+                cycle_len = self.epoch_size_in_batches*4
                 kwargs.update({'cycle_len':cycle_len})
             self.scheduler = LR_Cyclical(self.optimizer, self.clock, **kwargs)
         self.setCallbacks(self.scheduler)
    
     def setCallbacks(self, cb):
-        self.callbacks = [self.clock, self.stat_recorder, self.weight_watcher]
+        self.callbacks = self.default_cbs
         if isinstance(cb, list):
             for c in cb:
                 if not c in self.callbacks: self.callbacks.append(cb)
