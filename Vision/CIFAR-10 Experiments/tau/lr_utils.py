@@ -294,7 +294,7 @@ class StatRecorder(Callback):
         fig.set_size_inches(8,5)
         fig.set_dpi(80)
         train_line = ax.plot(range(len(self.train_stat_dict['train_loss'])), \
-                self.train_stat_dict['train_loss'], linewidth=1.25, color='red', \
+                self.train_stat_dict['train_loss'], linewidth=1.0, color='red', \
                 label='train_loss')
         if 'val_loss' in self.val_stat_list:
             val_line = ax.plot(np.asarray(self.val_iter_indices) - 1, self.val_stat_dict['val_loss'], \
@@ -302,6 +302,22 @@ class StatRecorder(Callback):
         _ = ax.legend(loc='upper right')
         ax.set_xlabel('Iterations')
         ax.set_ylabel('Loss per Batch')
+
+    def plotAccuracy(self):
+        if 'train_acc' in self.train_stat_dict and 'val_acc' in self.val_stat_dict:
+            fig = plt.gcf()
+            ax = plt.gca()
+            fig.set_size_inches(8,5)
+            fig.set_dpi(80)
+            train_line = ax.plot(range(len(self.train_stat_dict['train_acc'])), \
+                    self.train_stat_dict['train_acc'], linewidth=1.0, color='red', \
+                    label='train_acc')
+            val_line = ax.plot(np.asarray(self.val_iter_indices) - 1, self.val_stat_dict['val_acc'], \
+                    linewidth=1.25, color='green', label='val_acc')
+            _ = ax.legend(loc='best')
+            ax.set_xlabel('Iterations')
+            ax.set_ylabel('Accuracy')
+
 
     def writeStats(self, **kwargs):
         if self.save_stats:

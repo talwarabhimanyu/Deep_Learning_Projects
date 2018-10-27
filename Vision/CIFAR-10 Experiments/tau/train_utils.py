@@ -350,6 +350,9 @@ class Trainer():
     def plotLoss(self):
         self.stat_recorder.plotLoss()
     
+    def plotAccuracy(self):
+        self.stat_recorder.plotAccuracy()
+
     def plotLR(self):
         if self.scheduler is not None:
             fig = plt.gcf()
