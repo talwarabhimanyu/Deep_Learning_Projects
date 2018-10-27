@@ -134,30 +134,51 @@ class LR_Cyclical(LR_Scheduler):
     (3) min_lr/max_lr: specify the range over which the learning rate varies over a cycle
 
     """
-    def __init__(self, optimizer, clock, cycle_len, min_lr=1e-5, max_lr=1.0, policy='triangle'):
+    def __init__(self, optimizer, clock, cycle_len, cycle_mult=1, min_lr=1e-5, max_lr=1.0, policy='triangle'):
         self.clock = clock
         self.optimizer = optimizer
+        self.cycle_mult = cycle_mult
         self.cycle_len = cycle_len
         self.min_lr = min_lr
         self.max_lr = max_lr
         self.policy = policy
         self.lr_series = []
-        if policy == 'triangle': self.step_size = (max_lr - min_lr)*2/cycle_len
-        self.curr_lr = min_lr
+        self.curr_lr = max_lr
+        if policy == 'triangle': 
+            self.step_size = (max_lr - min_lr)*2/cycle_len
+            self.curr_lr = min_lr
+        self.counter = 0
+    
+    def initLR(self):
+        for param in self.optimizer.param_groups:
+            param['lr'] = self.curr_lr
+        self.counter += 1
+        self.lr_series.append(self.curr_lr)
 
     def updateLR(self, **kwargs):
-        self.lr_series.append(self.curr_lr)
+        self.counter += 1
         iter_time = self.clock.iter_time()
+        if self.counter % self.cycle_len == 0: self.resetCycle()
         if self.policy == 'triangle':
-            counter = (self.clock.iter_time() - 1) % self.cycle_len
-            if counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
-            else:                            self.curr_lr -= self.step_size
+            curr_counter = (self.counter) % self.cycle_len
+            if curr_counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
+            else:                                 self.curr_lr -= self.step_size
         elif self.policy == 'cosine':
-            self.curr_lr = self.min_lr + (self.max_lr - self.min_lr)*(1 + np.cos(((iter_time-1)% self.cycle_len)*np.pi/self.cycle_len))/2
+            self.curr_lr = self.min_lr + (self.max_lr - self.min_lr)*(1 + np.cos(((self.counter-1)% self.cycle_len)*np.pi/self.cycle_len))/2
         else:
             raise NotImplementedError
         for param in self.optimizer.param_groups:
             param['lr'] = self.curr_lr
+        self.lr_series.append(self.curr_lr)
+
+    def resetCycle(self):
+        self.cycle_len *= self.cycle_mult
+        if self.policy == 'triangle':
+            self.step_size = self.step_size/self.cycle_mult
+        self.counter = 0
+    
+    def on_train_begin(self, **kwargs):
+        self.initLR()
 
     def on_batch_end(self, **kwargs):
         self.updateLR(**kwargs)

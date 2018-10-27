@@ -173,7 +173,9 @@ class NeuralNet():
         elif sched_name == 'cyclical':
             if 'cycle_len' not in kwargs:
                 cycle_len = self.epoch_size_in_batches*4
-                kwargs.update({'cycle_len':cycle_len})
+            else:
+                cycle_len = self.epoch_size_in_batches*kwargs['cycle_len']
+            kwargs.update({'cycle_len':cycle_len})
             self.scheduler = LR_Cyclical(self.optimizer, self.clock, **kwargs)
         self.setCallbacks(self.scheduler)
    
