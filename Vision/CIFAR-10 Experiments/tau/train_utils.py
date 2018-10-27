@@ -319,7 +319,7 @@ class Trainer():
             max_iters = num_iters
         epoch = 0
         iter_count = 0
-        self.config_name += 'train(batch_size={}, iters={} {})'.format(self.batch_size, num_iters, iter_type)
+        self.config_name += 'train(batch_size {}, iters {} {})'.format(self.batch_size, num_iters, iter_type)
         for cb in self.callbacks: cb.on_train_begin(num_iters=num_iters, iter_type=iter_type)
         while epoch < max_epochs:
             for cb in self.callbacks: cb.on_epoch_begin()
@@ -355,16 +355,25 @@ class Trainer():
     def plotAccuracy(self):
         self.stat_recorder.plotAccuracy()
 
-    def plotLR(self):
+    def plotLR(self, show_plot=True, save_plot=False):
         if self.scheduler is not None:
+            if not show_plot: plt.ioff()
             fig = plt.gcf()
             ax = plt.gca()
             fig.set_size_inches(8,5)
             fig.set_dpi(80)
-            ax.set_ylabel('Learning Rate')
-            ax.set_xlabel('Iteration')
+            ax.set_ylabel('Learning Rate', fontsize=14)
+            ax.set_xlabel('Iteration', fontsize=14)
             _ = plt.plot(np.arange(len(self.scheduler.lr_series)), 
                     np.asarray(self.scheduler.lr_series))
+            min_lr = min(self.scheduler.lr_series)
+            max_lr = max(self.scheduler.lr_series)
+            _ = plt.axhline(y=min_lr, color='k', ls='--', lw=1.0)
+            _ = plt.axhline(y=max_lr, color='k', ls='--', lw=1.0)
+            _ = plt.annotate('max_lr = {:.5f}'.format(max_lr), xy=(0, max_lr+0.002))
+            _ = plt.annotate('min_lr = {:.5f}'.format(min_lr), xy=(0, min_lr-0.002))
+            if save_plot: plt.savefig('LR_Plot_{}.png'.format(self.config_name))
+            if not show_plot: plt.ion()
 
 
     def SaveCheckpoint(self, model_path):

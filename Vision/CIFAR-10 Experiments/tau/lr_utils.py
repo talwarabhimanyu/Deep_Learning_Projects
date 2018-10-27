@@ -138,51 +138,42 @@ class LR_Cyclical(LR_Scheduler):
         self.clock = clock
         self.optimizer = optimizer
         self.cycle_mult = cycle_mult
-        self.cycle_len = cycle_len
+        # Add 1 to cycle len to make it an odd number
+        self.cycle_len = cycle_len + (cycle_len+1)%2
         self.min_lr = min_lr
         self.max_lr = max_lr
         self.policy = policy
         self.lr_series = []
         self.curr_lr = max_lr
-        if policy == 'triangle': 
-            self.step_size = (max_lr - min_lr)*2/cycle_len
-            self.curr_lr = min_lr
+        if policy == 'triangle': self.step_size = (max_lr - min_lr)*2/(self.cycle_len - 1)
+        # The first update of a cycle receives a counter of 0
         self.counter = 0
     
-    def initLR(self):
-        for param in self.optimizer.param_groups:
-            param['lr'] = self.curr_lr
-        self.counter += 1
-        self.lr_series.append(self.curr_lr)
-
     def updateLR(self, **kwargs):
-        self.counter += 1
-        iter_time = self.clock.iter_time()
-        if self.counter % self.cycle_len == 0: self.resetCycle()
         if self.policy == 'triangle':
-            curr_counter = (self.counter) % self.cycle_len
-            if curr_counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
-            else:                                 self.curr_lr -= self.step_size
+            if self.counter == 0:                   self.curr_lr = self.min_lr
+            elif self.counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
+            else:                                   self.curr_lr -= self.step_size
         elif self.policy == 'cosine':
-            self.curr_lr = self.min_lr + (self.max_lr - self.min_lr)*(1 + np.cos(((self.counter-1)% self.cycle_len)*np.pi/self.cycle_len))/2
+            self.curr_lr = self.min_lr + (self.max_lr - self.min_lr)*(1 + np.cos((self.counter % self.cycle_len*np.pi/(self.cycle_len-1))))/2
         else:
             raise NotImplementedError
         for param in self.optimizer.param_groups:
             param['lr'] = self.curr_lr
         self.lr_series.append(self.curr_lr)
+        self.counter += 1
+        if (self.counter % self.cycle_len == 0) and (self.clock.iter_time() > 1): self.resetCycle()
 
     def resetCycle(self):
-        self.cycle_len *= self.cycle_mult
+        self.cycle_len = self.cycle_len*self.cycle_mult
+        self.cycle_len += (self.cycle_len + 1)%2
         if self.policy == 'triangle':
-            self.step_size = self.step_size/self.cycle_mult
-        self.counter = 0
+            self.step_size = (self.max_lr - self.min_lr)*2/(self.cycle_len - 1)
+        self.counter = 1
     
-    def on_train_begin(self, **kwargs):
-        self.initLR()
-
-    def on_batch_end(self, **kwargs):
+    def on_batch_begin(self, **kwargs):
         self.updateLR(**kwargs)
-
+    
 class WeightWatcher(Callback):
     def __init__(self, device, clock, optimizer):
         self.optimizer = optimizer
