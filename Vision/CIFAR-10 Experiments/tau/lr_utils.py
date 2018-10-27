@@ -147,9 +147,15 @@ class LR_Cyclical(LR_Scheduler):
 
     def updateLR(self, **kwargs):
         self.lr_series.append(self.curr_lr)
-        counter = (self.clock.iter_time() - 1) % self.cycle_len
-        if counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
-        else:                            self.curr_lr -= self.step_size
+        iter_time = self.clock.iter_time()
+        if self.policy == 'triangle':
+            counter = (self.clock.iter_time() - 1) % self.cycle_len
+            if counter < 0.5*self.cycle_len: self.curr_lr += self.step_size
+            else:                            self.curr_lr -= self.step_size
+        elif self.policy == 'cosine':
+            self.curr_lr = self.min_lr + (self.max_lr - self.min_lr)*(1 + np.cos(((iter_time-1)% self.cycle_len)*np.pi/self.cycle_len))/2
+        else:
+            raise NotImplementedError
         for param in self.optimizer.param_groups:
             param['lr'] = self.curr_lr
 
